@@ -761,11 +761,14 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 
 	stream->total_writes->Inc();
 
-	// Send to each of our filters.
+	// Run through all filters, execute their hooks and keep
+	// those where we actually want to send records to.
+	std::vector<Filter*> active_filters;
+	active_filters.reserve(stream->filters.size());
+
 	for ( list<Filter*>::iterator i = stream->filters.begin(); i != stream->filters.end(); ++i )
 		{
 		Filter* filter = *i;
-		string path = filter->path;
 
 		// Policy hooks may veto the logging or alter the log
 		// record if really necessary. Potential optimization:
@@ -782,6 +785,21 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 
 		if ( stream_veto )
 			continue;
+
+		active_filters.push_back(filter);
+		}
+
+	return WriteToFilters(id, stream, active_filters, columns);
+	}
+
+// Bottom half of filter processing, run path function and instantiate
+// filters based on records, convert to thread vals and pass on to filters.
+bool Manager::WriteToFilters(EnumVal* id, Stream* stream, const std::vector<Filter*>& filters,
+                             const RecordValPtr& columns)
+	{
+	for ( const auto& filter : filters )
+		{
+		string path = filter->path;
 
 		if ( filter->path_func )
 			{

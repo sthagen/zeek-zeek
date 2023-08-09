@@ -302,6 +302,9 @@ private:
 
 	bool RemoveStream(unsigned int idx);
 
+	bool WriteToFilters(EnumVal* id, Stream* stream, const std::vector<Filter*>& filters,
+	                    const RecordValPtr& columns);
+
 	std::vector<Stream*> streams; // Indexed by stream enum.
 	int rotations_pending; // Number of rotations not yet finished.
 	FuncPtr rotation_format_func;

@@ -17,6 +17,24 @@ Breaking Changes
   should only cause breakage for people using a version of ``zkg` that doesn't
   come bundled with Zeek (which we generally don't recommend doing).
 
+- Log policy hooks of all attached filters now executes before sending
+  the serialized log record to filters.
+
+  This change only matters to you if you are using multiple ``Log::Filter``
+  instances on streams combined with log policy hooks modifying log records
+  conditionally depending on the ``filter`` parameter.
+
+  Previously, ``path_func`` determination and serialization of log records
+  happened directly after execution of individual filter hooks, allowing
+  filters to observing the same log record in different states depending
+  on which other filters are registered. While the new behavior seems to
+  reduce flexibility, it adds predictability in that all filters observe
+  the same final log record.
+
+  The main motivation for this change is to delay a ``Log::write()`` after
+  hook execution for some late modifications.
+
+
 New Functionality
 -----------------
 
