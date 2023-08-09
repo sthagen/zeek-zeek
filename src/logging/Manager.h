@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include <memory>
 #include <string_view>
+#include <unordered_map>
 
 #include "zeek/EventHandler.h"
 #include "zeek/Tag.h"
@@ -29,6 +31,9 @@ class SerializationFormat;
 
 namespace logging
 	{
+
+class DelayInfo;
+using DelayBlock = std::unordered_map<const zeek::RecordVal*, std::shared_ptr<DelayInfo>>;
 
 class WriterFrontend;
 class RotationFinishedMessage;
@@ -158,6 +163,29 @@ public:
 	bool Write(EnumVal* id, RecordVal* columns);
 
 	/**
+	 * Mark a record for delay.
+	 *
+	 * This method has to be called before or during processing
+	 * (when executing logging hooks) of a Write().
+	 */
+	bool Delay(const RecordValPtr columns);
+
+	/**
+	 * Undelay a previously delayed record.
+	 */
+	bool Undelay(const RecordValPtr& columns);
+
+	/**
+	 * The given RecordValPtr instance has finished delaying.
+	 * Either Undelay() was called often enough, or its timer
+	 * has expired.
+	 *
+	 * TBD: This could be private, but would need friending with
+	 * the timer then?
+	 */
+	bool DelayDone(const RecordValPtr& columns);
+
+	/**
 	 * Create a new log writer frontend. This is exposed so that the
 	 * communication system can recreate remote log streams locally.
 	 *
@@ -285,6 +313,11 @@ private:
 	struct Filter;
 	struct Stream;
 	struct WriterInfo;
+	class LogDelayExpiredTimer;
+
+	// TODO: Leave as is or make DelayInfo private to the Manager too,
+	// and use member functions for helpers insteaed of free ones.
+	friend class DelayInfo;
 
 	bool TraverseRecord(Stream* stream, Filter* filter, RecordType* rt, TableVal* include,
 	                    TableVal* exclude, const std::string& path, const std::list<int>& indices);
@@ -312,6 +345,9 @@ private:
 
 	telemetry::IntCounterFamily total_log_stream_writes_family;
 	telemetry::IntCounterFamily total_log_writer_writes_family;
+
+	// State information about delayed log records.
+	DelayBlock delay_block;
 	};
 
 	} // namespace logging;

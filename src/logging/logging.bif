@@ -70,3 +70,37 @@ function Log::__flush%(id: Log::ID%): bool
 	bool result = zeek::log_mgr->Flush(id->AsEnumVal());
 	return zeek::val_mgr->Bool(result);
 	%}
+
+%%{
+namespace {
+	// Create intrusive pointer adopting reference.
+	zeek::RecordValPtr ref(zeek::Val *v) {
+		if ( v->GetType()->Tag() != zeek::TYPE_RECORD ) {
+			zeek::emit_builtin_error("not a record");
+			return nullptr;
+		}
+
+		return zeek::IntrusivePtr<zeek::RecordVal>{zeek::NewRef{}, v->AsRecordVal()};
+	}
+}
+%%}
+
+function Log::__delay%(rec: any%): bool
+	%{
+	auto columns = ref(rec);
+	if ( ! columns )
+		return zeek::val_mgr->Bool(false);
+
+	bool result = zeek::log_mgr->Delay(columns);
+	return zeek::val_mgr->Bool(result);
+	%}
+
+function Log::__undelay%(rec: any%): bool
+	%{
+	auto columns = ref(rec);
+	if ( ! columns )
+		return zeek::val_mgr->Bool(false);
+
+	bool result = zeek::log_mgr->Undelay(columns);
+	return zeek::val_mgr->Bool(result);
+	%}

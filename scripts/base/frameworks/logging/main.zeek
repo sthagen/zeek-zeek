@@ -355,6 +355,19 @@ export {
 		policy: PolicyHook &optional;
 	};
 
+	## These defaults allow for a maximum of 5000 queued log records
+	## per stream per worker.
+	##
+	## In a 10 worker setup with perfectly distributed log rates, this
+	## allows for up to 50k log records per second to be delayed before
+	## forcefully evicting records at the head.
+	##
+	## Considerations for larger delays:
+	## * Data loss in face of worker crashes
+	## * Memory consumption
+	const max_delay_interval = 200msec &redef;
+	const max_delay_records = 1000 &redef;
+
 	## Type defining the content of a logging stream.
 	type Stream: record {
 		## A record type defining the log's columns.
@@ -393,6 +406,9 @@ export {
 		## log stream is disabled and enabled when the stream is
 		## enabled again.
 		event_groups: set[string] &default=set();
+
+		max_delay_interval: interval &default=max_delay_interval;
+		max_delay_records: count &default=max_delay_records;
 	};
 
 	## Sentinel value for indicating that a filter was not found when looked up.
@@ -602,6 +618,30 @@ export {
 	## of the given log record. Note that filter-level policy hooks still get
 	## invoked after the global hook vetoes, but they cannot "un-veto" the write.
 	global log_stream_policy: Log::StreamPolicyHook;
+
+	## Mark the given record for delay.
+	##
+	## A record is maximally delayed by the amount configured for
+	## the stream it is logged to, or the default Log::max_delay.
+	## If the delay queue of a stream would be exceeded, the oldest
+	## entry is expired.
+	global delay: function(rec: any): bool;
+
+	## Undelay the given record. Undelaying a record that was
+	## never passed to Log::delay() is an error.
+	global undelay: function(rec: any): bool;
+
+	## Set the maximum delay for a stream. Multiple calls to this
+	## result in the maximum to be used. The delay of a log stream
+	## can currently not be reduced dynamically. It can be increased
+	## dynamically.
+	##
+	## TBD: We could support a flush/force for reducing with
+	##      the constraint that it'll flush the queue.
+	global set_max_delay_interval: function(id: Log::ID, delay: interval);
+
+	## Seth the maximum number of records in the delay queue.
+	global set_max_delay_records: function(id: Log::ID, length: count);
 }
 
 global all_streams: table[ID] of Stream = table();
@@ -877,4 +917,14 @@ event zeek_init() &priority=5
 	{
 	if ( print_to_log != REDIRECT_NONE )
 		Log::create_stream(PRINTLOG, [$columns=PrintLogInfo, $ev=log_print, $path=print_log_path]);
+	}
+
+function delay(rec: any): bool
+	{
+	return Log::__delay(rec);
+	}
+
+function undelay(rec: any): bool
+	{
+	return Log::__undelay(rec);
 	}

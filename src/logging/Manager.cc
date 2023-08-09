@@ -30,6 +30,30 @@ using namespace std;
 
 namespace zeek::logging
 	{
+// DelayInfo referenced from queue and delay block as shared_ptr.
+//
+// A DelayInfo keeps the record val alive.
+class DelayInfo
+	{
+public:
+	explicit DelayInfo(const zeek::RecordValPtr columns) : columns(std::move(columns)) { }
+
+	// No copy or assignment of DelayInfo itself, should
+	// always be managed as a shared_ptr.
+	DelayInfo(const DelayInfo&) = delete;
+	DelayInfo& operator=(const DelayInfo&) = delete;
+
+	RecordValPtr columns;
+	// References (number of Log::delay() calls).
+	int delay_refs = 1;
+	// Stamped during Log::write()
+	double expire_time = 0.0;
+
+	// State for WriteToFilters() and only known at Manager::Write() time.
+	EnumVal* id;
+	Manager::Stream* stream;
+	std::vector<Manager::Filter*> filters;
+	};
 
 struct Manager::Filter
 	{
@@ -100,7 +124,51 @@ struct Manager::Stream
 
 	std::optional<telemetry::IntCounter> total_writes; // Initialized on first write.
 
+	// The delay queue.
+	std::list<std::shared_ptr<DelayInfo>> delay_queue;
+	Manager::LogDelayExpiredTimer* delay_timer = nullptr;
+
 	~Stream();
+	};
+
+// Timer for the head of the per stream delay queue.
+class Manager::LogDelayExpiredTimer : public zeek::detail::Timer
+	{
+public:
+	LogDelayExpiredTimer(Manager::Stream* stream, double t)
+		: Timer(t, zeek::detail::TIMER_LOG_DELAY_EXPIRE), stream(stream)
+		{
+		}
+
+	void Dispatch(double t, bool is_expire) override
+		{
+		stream->delay_timer = nullptr;
+
+		while ( ! stream->delay_queue.empty() )
+			{
+			const auto& delay_info = stream->delay_queue.front();
+
+			// If is_expire, drain the queue. Otherwise, stop
+			// when the next record in the queue is in the future.
+			if ( ! is_expire && delay_info->expire_time > t )
+				break;
+
+			DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
+			zeek::log_mgr->DelayDone(delay_info->columns);
+
+			stream->delay_queue.pop_front();
+			}
+
+		// Re-arm timer if more records are in the queue.
+		if ( ! stream->delay_queue.empty() )
+			{
+			double et = stream->delay_queue.front()->expire_time;
+			stream->delay_timer = new LogDelayExpiredTimer(stream, et);
+			}
+		}
+
+private:
+	Manager::Stream* stream;
 	};
 
 Manager::Filter::~Filter()
@@ -789,6 +857,41 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		active_filters.push_back(filter);
 		}
 
+	// Nothing to do, but cleanup the delay_block entry if it exists.
+	if ( active_filters.empty() )
+		{
+		delay_block.erase(columns.get());
+		return true;
+		}
+
+	// Has this record been delayed?
+	const auto& it = delay_block.find(columns.get());
+	if ( it != delay_block.end() )
+		{
+		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns.get(),
+		        it->second->delay_refs);
+
+		// TODO: What if this record has already been delayed?!
+		// Maybe on a different stream?
+		it->second->id = id;
+		it->second->stream = stream;
+		it->second->filters = std::move(active_filters);
+
+		// XXX: Get expire delay form stream instead of hard-coding.
+		// TODO: Add this on Stream as a helper
+		//       so it's re-usable from elsewhere.
+		it->second->expire_time = zeek::run_state::network_time + 0.25;
+		stream->delay_queue.push_back(it->second);
+		if ( stream->delay_timer == nullptr )
+			{
+			stream->delay_timer = new LogDelayExpiredTimer(stream, it->second->expire_time);
+			zeek::detail::timer_mgr->Add(stream->delay_timer);
+			}
+
+		// Continued at a later point.
+		return true;
+		}
+
 	return WriteToFilters(id, stream, active_filters, columns);
 	}
 
@@ -989,6 +1092,86 @@ bool Manager::WriteToFilters(EnumVal* id, Stream* stream, const std::vector<Filt
 		}
 
 	return true;
+	}
+
+namespace
+	{
+
+void delay_block_housekeeping(DelayBlock& delay_block)
+	{
+	std::vector<DelayBlock::key_type> remove_keys;
+	for ( const auto& [ptr, _] : delay_block )
+		{
+		if ( ptr->RefCnt() == 1 )
+			remove_keys.push_back(ptr);
+		}
+
+	for ( const auto ptr : remove_keys )
+		delay_block.erase(ptr);
+	}
+
+	}
+
+bool Manager::Delay(RecordValPtr columns_arg)
+	{
+	const auto* p = columns_arg.get();
+	const auto& it = delay_block.find(p);
+	if ( it == delay_block.end() )
+		{
+		delay_block.emplace(p, std::move(std::make_shared<DelayInfo>(std::move(columns_arg))));
+		}
+	else
+		{
+		++it->second->delay_refs;
+		}
+
+	DBG_LOG(DBG_LOGGING, "Delayed log record %p RefCnt=%d", p, p->RefCnt());
+
+	// TODO: Need some clenaup queue/timer for delayed records that
+	//       never see a Log::write(). This should almost never
+	//       happen, but it needs to be handled.
+	//
+	// Basically, any records in delay_block with a reference count
+	// of 1 can be freed because we're the last ones to hold a reference.
+	delay_block_housekeeping(delay_block);
+
+	return true;
+	}
+
+bool Manager::Undelay(const RecordValPtr& columns_arg)
+	{
+	DBG_LOG(DBG_LOGGING, "Undelayed log record %p RefCnt=%d", columns_arg.get(),
+	        columns_arg->RefCnt());
+	return true;
+	}
+
+bool Manager::DelayDone(const RecordValPtr& columns_arg)
+	{
+	const auto* p = columns_arg.get();
+	const auto& it = delay_block.find(p);
+	if ( it == delay_block.end() )
+		{
+		reporter->Error("Missing record %p for DelayDone()", p);
+		return false;
+		}
+
+	DBG_LOG(DBG_LOGGING, "DelayDonelog record %p RefCnt=%d", p, p->RefCnt());
+
+	const auto& delay_info = it->second;
+	// TODO: What if the stream vanished? Well, in the best case we never
+	//       get here, but we should cancel the timer.
+	// TODO: What if a filter vanished and we're still delaying records?
+	//       It's probably not happening often enough and we could
+	//       go manually through the the stream queue and remove the
+	//		 filter from those.
+
+	bool res = WriteToFilters(delay_info->id, delay_info->stream, delay_info->filters,
+	                          delay_info->columns);
+
+	// XXX: This is wrong if the same record was written to multiple streams.
+	delay_block.erase(it);
+
+	return res;
 	}
 
 threading::Value* Manager::ValToLogVal(std::optional<ZVal>& val, Type* ty)
