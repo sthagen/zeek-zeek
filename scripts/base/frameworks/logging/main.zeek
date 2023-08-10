@@ -619,17 +619,38 @@ export {
 	## invoked after the global hook vetoes, but they cannot "un-veto" the write.
 	global log_stream_policy: Log::StreamPolicyHook;
 
-	## Mark the given record for delay.
-	##
-	## A record is maximally delayed by the amount configured for
-	## the stream it is logged to, or the default Log::max_delay.
-	## If the delay queue of a stream would be exceeded, the oldest
-	## entry is expired.
-	global delay: function(rec: any): bool;
+	## Function to be invoked for record that has been delayd.
+	## This is similar to the mechanism used for :zeek:see:`Log::StreamPolicyHook`,
+	## but a callback of this type passed to zeek:see:`Log::delay` an executes
+	## just before the record is dispatched to the individual filters.
+	## Returning false discards the record across all filters.
+	type PostDelayCallback: function(rec: any, id: ID): bool;
 
-	## Undelay the given record. Undelaying a record that was
-	## never passed to Log::delay() is an error.
-	global undelay: function(rec: any): bool;
+	## Noop PostDelayCallback - internally this is just ignored.
+	global empty_post_delay_cb: PostDelayCallback;
+
+	## Mark the given record for delay. Internally this increases
+	## a reference count in case multiple users want to delay the
+	## given record. A zeek:see:`Log::delay_finish` releases the
+	## reference.
+	##
+	## A record is at most delayed by the interval configured for the
+	## stream it is logged to, or otherwise the default Log::max_delay.
+	## If the delay queue of a stream would be exceeded, the oldest
+	## entry is expired. When the number of references is 0, the record
+	## is logged, regardless of any maximum timer.
+	##
+	## rec: Log record
+	##
+	## post_delay_cb: A function to invoke when either Log::delay_finish
+	##
+	##
+	global delay: function(rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): bool;
+
+	## Call this function with a record that was previously delayed.
+	##
+	## TBD: delay_release() so it is more obvious something was held?
+	global delay_finish: function(rec: any): bool;
 
 	## Set the maximum delay for a stream. Multiple calls to this
 	## result in the maximum to be used. The delay of a log stream
@@ -919,12 +940,17 @@ event zeek_init() &priority=5
 		Log::create_stream(PRINTLOG, [$columns=PrintLogInfo, $ev=log_print, $path=print_log_path]);
 	}
 
-function delay(rec: any): bool
+function empty_post_delay_cb(rec: any, id: ID): bool {
+	return T;
+}
+
+function delay(rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): bool
 	{
-	return Log::__delay(rec);
+	return Log::__delay(rec, post_delay_cb);
 	}
 
-function undelay(rec: any): bool
+
+function delay_finish(rec: any): bool
 	{
-	return Log::__undelay(rec);
+	return Log::__delay_finish(rec);
 	}

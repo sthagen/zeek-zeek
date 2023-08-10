@@ -167,13 +167,18 @@ public:
 	 *
 	 * This method has to be called before or during processing
 	 * (when executing logging hooks) of a Write().
+	 *
+	 * @param columns The log record to delay.
+	 *
+	 * @param post_delay_cb A Zeek callback function to invoke when the
+	 * delay completed or nullptr.
 	 */
-	bool Delay(const RecordValPtr columns);
+	bool Delay(const RecordValPtr columns, FuncPtr post_delay_cb);
 
 	/**
-	 * Undelay a previously delayed record.
+	 * TODO: Docs
 	 */
-	bool Undelay(const RecordValPtr& columns);
+	bool DelayFinished(const RecordValPtr& columns);
 
 	/**
 	 * The given RecordValPtr instance has finished delaying.

@@ -85,22 +85,28 @@ namespace {
 }
 %%}
 
-function Log::__delay%(rec: any%): bool
+function Log::__delay%(rec: any, post_delay_cb: PostDelayCallback%): bool
 	%{
 	auto columns = ref(rec);
 	if ( ! columns )
 		return zeek::val_mgr->Bool(false);
 
-	bool result = zeek::log_mgr->Delay(columns);
+	static auto empty_post_delay_cb_ptr = zeek::id::find_func("Log::empty_post_delay_cb");
+
+	auto post_delay_cb_ptr = post_delay_cb->AsFuncVal()->AsFuncPtr();
+	if ( post_delay_cb_ptr == empty_post_delay_cb_ptr )
+		post_delay_cb_ptr = Func::nil;
+
+	bool result = zeek::log_mgr->Delay(columns, post_delay_cb_ptr);
 	return zeek::val_mgr->Bool(result);
 	%}
 
-function Log::__undelay%(rec: any%): bool
+function Log::__delay_finish%(rec: any%): bool
 	%{
 	auto columns = ref(rec);
 	if ( ! columns )
 		return zeek::val_mgr->Bool(false);
 
-	bool result = zeek::log_mgr->Undelay(columns);
+	bool result = zeek::log_mgr->DelayFinished(columns);
 	return zeek::val_mgr->Bool(result);
 	%}

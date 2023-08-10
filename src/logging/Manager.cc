@@ -53,6 +53,10 @@ public:
 	EnumVal* id;
 	Manager::Stream* stream;
 	std::vector<Manager::Filter*> filters;
+	std::vector<FuncPtr> post_delay_callbacks;
+
+	// Is this just veto?
+	bool vetoed = false;
 	};
 
 struct Manager::Filter
@@ -129,6 +133,9 @@ struct Manager::Stream
 	Manager::LogDelayExpiredTimer* delay_timer = nullptr;
 
 	~Stream();
+
+	void ArmLogDelayExpiredTimer(double t);
+	void DelayExpiredTimerDispatch(double t, bool is_expire);
 	};
 
 // Timer for the head of the per stream delay queue.
@@ -142,33 +149,7 @@ public:
 
 	void Dispatch(double t, bool is_expire) override
 		{
-		stream->delay_timer = nullptr;
-
-		while ( ! stream->delay_queue.empty() )
-			{
-			const auto& delay_info = stream->delay_queue.front();
-
-			// If is_expire, drain the queue. Otherwise, stop
-			// when the next record in the queue is in the future.
-			if ( ! is_expire && delay_info->expire_time > t )
-				break;
-
-			// If columns in nullptr, it's gone.
-			if ( delay_info->columns != nullptr )
-				{
-				DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
-				zeek::log_mgr->DelayDone(delay_info->columns);
-				}
-
-			stream->delay_queue.pop_front();
-			}
-
-		// Re-arm timer if more records are in the queue.
-		if ( ! stream->delay_queue.empty() )
-			{
-			double et = stream->delay_queue.front()->expire_time;
-			stream->delay_timer = new LogDelayExpiredTimer(stream, et);
-			}
+		stream->DelayExpiredTimerDispatch(t, is_expire);
 		}
 
 private:
@@ -210,6 +191,41 @@ Manager::Stream::~Stream()
 
 	for ( list<Filter*>::iterator f = filters.begin(); f != filters.end(); ++f )
 		delete *f;
+	}
+
+void Manager::Stream::ArmLogDelayExpiredTimer(double t)
+	{
+	assert(delay_timer == nullptr);
+	delay_timer = new LogDelayExpiredTimer(this, t);
+	zeek::detail::timer_mgr->Add(delay_timer);
+	}
+
+void Manager::Stream::DelayExpiredTimerDispatch(double t, bool is_expire)
+	{
+	delay_timer = nullptr;
+
+	while ( ! delay_queue.empty() )
+		{
+		const auto& delay_info = delay_queue.front();
+
+		// If is_expire, drain the queue. Otherwise, stop
+		// when the next record in the queue is in the future.
+		if ( ! is_expire && delay_info->expire_time > t )
+			break;
+
+		// If columns in nullptr, it's gone.
+		if ( delay_info->columns != nullptr )
+			{
+			DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
+			zeek::log_mgr->DelayDone(delay_info->columns);
+			}
+
+		delay_queue.pop_front();
+		}
+
+	// Re-arm timer if more records are in the queue.
+	if ( ! delay_queue.empty() )
+		ArmLogDelayExpiredTimer(delay_queue.front()->expire_time);
 	}
 
 Manager::Manager()
@@ -861,15 +877,24 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		active_filters.push_back(filter);
 		}
 
-	// Nothing to do, but cleanup the delay_block entry if it exists.
+	const auto& it = delay_block.find(columns.get());
+
 	if ( active_filters.empty() )
 		{
-		delay_block.erase(columns.get());
+		// All filters vetoed, so there's nothing to do here
+		// other then marking the delay info as such. We'll
+		// still be waiting for Log::delay_finish() calls or
+		// the expiration timer for cleanup.
+		//
+		// Not sure this is a good idea though as we're keeping
+		// state for something that's essentially gone, but it
+		// allows some validity checks for script usages.
+		if ( it != delay_block.end() )
+			it->second->vetoed = true;
+
 		return true;
 		}
 
-	// Has this record been delayed?
-	const auto& it = delay_block.find(columns.get());
 	if ( it != delay_block.end() )
 		{
 		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns.get(),
@@ -887,10 +912,7 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		it->second->expire_time = run_state::network_time + 0.200;
 		stream->delay_queue.push_back(it->second);
 		if ( stream->delay_timer == nullptr )
-			{
-			stream->delay_timer = new LogDelayExpiredTimer(stream, it->second->expire_time);
-			zeek::detail::timer_mgr->Add(stream->delay_timer);
-			}
+			stream->ArmLogDelayExpiredTimer(it->second->expire_time);
 
 		// Continued at a later point.
 		return true;
@@ -1116,20 +1138,28 @@ void delay_block_housekeeping(DelayBlock& delay_block)
 
 	}
 
-bool Manager::Delay(RecordValPtr columns_arg)
+bool Manager::Delay(RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	{
 	const auto* p = columns_arg.get();
 	const auto& it = delay_block.find(p);
 	if ( it == delay_block.end() )
 		{
-		delay_block.emplace(p, std::move(std::make_shared<DelayInfo>(std::move(columns_arg))));
+		const auto& iit = delay_block
+		                      .emplace(
+								  p, std::move(std::make_shared<DelayInfo>(std::move(columns_arg))))
+		                      .first;
+		if ( post_delay_cb )
+			iit->second->post_delay_callbacks.emplace_back(post_delay_cb);
 		}
 	else
 		{
 		++it->second->delay_refs;
+		if ( post_delay_cb )
+			it->second->post_delay_callbacks.emplace_back(post_delay_cb);
 		}
 
-	DBG_LOG(DBG_LOGGING, "Delayed log record %p RefCnt=%d", p, p->RefCnt());
+	DBG_LOG(DBG_LOGGING, "Delayed log record %p RefCnt=%d post_delay_cb=%p", p, p->RefCnt(),
+	        post_delay_cb.get());
 
 	// TODO: Need some clenaup queue/timer for delayed records that
 	//       never see a Log::write(). This should almost never
@@ -1142,18 +1172,15 @@ bool Manager::Delay(RecordValPtr columns_arg)
 	return true;
 	}
 
-bool Manager::Undelay(const RecordValPtr& columns_arg)
+bool Manager::DelayFinished(const RecordValPtr& columns_arg)
 	{
-	DBG_LOG(DBG_LOGGING, "Undelayed log record %p RefCnt=%d", columns_arg.get(),
-	        columns_arg->RefCnt());
-
-	// TODO: If refcnt 0, forward to filters already and slight error reporting.
-
 	const auto* p = columns_arg.get();
+	DBG_LOG(DBG_LOGGING, "DelayFinish() for %p RefCnt=%d", p, p->RefCnt());
+
 	const auto& it = delay_block.find(p);
 	if ( it == delay_block.end() )
 		{
-		reporter->Warning("Undelay() for non existing record %p", p);
+		reporter->Warning("DelayFinish(): Non-existing log record %p", p);
 		return false;
 		}
 
@@ -1162,8 +1189,8 @@ bool Manager::Undelay(const RecordValPtr& columns_arg)
 	--delay_info->delay_refs;
 	if ( delay_info->delay_refs == 0 )
 		{
-		// TODO: Helper that takes DelayInfo directly?
 		DelayDone(delay_info->columns);
+
 		return true;
 		}
 
@@ -1190,8 +1217,24 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 	//       go manually through the the stream queue and remove the
 	//		 filter from those.
 
-	bool res = WriteToFilters(delay_info->id, delay_info->stream, delay_info->filters,
-	                          delay_info->columns);
+	bool res = true;
+	if ( ! delay_info->vetoed )
+		{
+		// Run through all registered post delay callbacks just before
+		// handing the record over to the filters.
+		auto id = IntrusivePtr{NewRef{}, delay_info->stream->id};
+		bool allow = true;
+		for ( const auto& cb : delay_info->post_delay_callbacks )
+			{
+			auto v = cb->Invoke(delay_info->columns, id);
+			if ( v )
+				allow &= v->AsBool();
+			}
+
+		if ( allow )
+			res = WriteToFilters(delay_info->id, delay_info->stream, delay_info->filters,
+			                     delay_info->columns);
+		}
 
 	// Release RecordValPtr
 	delay_info->columns = nullptr;
