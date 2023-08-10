@@ -153,8 +153,12 @@ public:
 			if ( ! is_expire && delay_info->expire_time > t )
 				break;
 
-			DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
-			zeek::log_mgr->DelayDone(delay_info->columns);
+			// If columns in nullptr, it's gone.
+			if ( delay_info->columns != nullptr )
+				{
+				DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
+				zeek::log_mgr->DelayDone(delay_info->columns);
+				}
 
 			stream->delay_queue.pop_front();
 			}
@@ -880,7 +884,7 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		// XXX: Get expire delay form stream instead of hard-coding.
 		// TODO: Add this on Stream as a helper
 		//       so it's re-usable from elsewhere.
-		it->second->expire_time = zeek::run_state::network_time + 0.25;
+		it->second->expire_time = run_state::network_time + 0.200;
 		stream->delay_queue.push_back(it->second);
 		if ( stream->delay_timer == nullptr )
 			{
@@ -1142,6 +1146,27 @@ bool Manager::Undelay(const RecordValPtr& columns_arg)
 	{
 	DBG_LOG(DBG_LOGGING, "Undelayed log record %p RefCnt=%d", columns_arg.get(),
 	        columns_arg->RefCnt());
+
+	// TODO: If refcnt 0, forward to filters already and slight error reporting.
+
+	const auto* p = columns_arg.get();
+	const auto& it = delay_block.find(p);
+	if ( it == delay_block.end() )
+		{
+		reporter->Warning("Undelay() for non existing record %p", p);
+		return false;
+		}
+
+	const auto& delay_info = it->second;
+
+	--delay_info->delay_refs;
+	if ( delay_info->delay_refs == 0 )
+		{
+		// TODO: Helper that takes DelayInfo directly?
+		DelayDone(delay_info->columns);
+		return true;
+		}
+
 	return true;
 	}
 
@@ -1167,6 +1192,9 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 
 	bool res = WriteToFilters(delay_info->id, delay_info->stream, delay_info->filters,
 	                          delay_info->columns);
+
+	// Release RecordValPtr
+	delay_info->columns = nullptr;
 
 	// XXX: This is wrong if the same record was written to multiple streams.
 	delay_block.erase(it);
