@@ -229,7 +229,7 @@ export {
 	## * Data loss in face of worker crashes
 	## * Memory consumption
 	##
-	const max_delay_interval = 500msec &redef;
+	const max_delay_interval = 200msec &redef;
 
 	## Maximum length of the delay queue, per stream.
 	const max_delay_queue_size = 1000 &redef;

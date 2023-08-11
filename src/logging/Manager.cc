@@ -30,18 +30,35 @@ using namespace std;
 
 namespace zeek::logging
 	{
-// DelayInfo referenced from queue and delay block as shared_ptr.
+// DelayInfo tracks information for the delay state of a record value
+// that most often is a log record eventually sent through Log::Write()
 //
-// A DelayInfo keeps the record val alive.
+// For every Log::Write() happening for such a record WriteInfo records
+// are held tracking filters and delay hooks to execute.
+
 class DelayInfo
 	{
 public:
+	struct StagedWrite
+		{
+		Manager::Stream* stream;
+		std::vector<Manager::Filter*> filters;
+		std::vector<FuncPtr> post_delay_callbacks;
+		};
+
 	explicit DelayInfo(const zeek::RecordValPtr columns) : columns(std::move(columns)) { }
 
 	// No copy or assignment of DelayInfo itself, should
 	// always be managed as a shared_ptr.
 	DelayInfo(const DelayInfo&) = delete;
 	DelayInfo& operator=(const DelayInfo&) = delete;
+
+	// Stage a write to a stream with a set of filters.
+	void StageWrite(Manager::Stream* stream, std::vector<Manager::Filter*> filters)
+		{
+		staged_writes.push_back({stream, std::move(filters), std::move(post_delay_callbacks)});
+		post_delay_callbacks.clear();
+		}
 
 	RecordValPtr columns;
 	// References (number of Log::delay() calls).
@@ -50,9 +67,8 @@ public:
 	double expire_time = 0.0;
 
 	// State for WriteToFilters() and only known at Manager::Write() time.
-	Manager::Stream* stream;
-	std::vector<Manager::Filter*> filters;
 	std::vector<FuncPtr> post_delay_callbacks;
+	std::vector<StagedWrite> staged_writes;
 
 	// Is this just veto?
 	bool vetoed = false;
@@ -199,9 +215,8 @@ Manager::Stream::~Stream()
 void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info,
                               std::vector<Manager::Filter*> arg_filters)
 	{
+	delay_info->StageWrite(this, std::move(arg_filters));
 	delay_info->delaying = true;
-	delay_info->stream = this;
-	delay_info->filters = std::move(arg_filters);
 
 	double expire_time = run_state::network_time + max_delay_interval;
 
@@ -940,10 +955,27 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 
 	if ( it != delay_block.end() )
 		{
+		const auto& delay_info = it->second;
 		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns.get(),
-		        it->second->delay_refs);
+		        delay_info->delay_refs);
 
-		stream->Enqueue(it->second, std::move(active_filters));
+		// First time we see a Log::Write() for this record, enqueue
+		// it to the first stream.
+		//
+		// TODO: Restructure as delay_info->HandleWrite() if the
+		// these semantics seem reasonable.
+		if ( ! delay_info->delaying )
+			{
+			stream->Enqueue(delay_info, std::move(active_filters));
+			}
+		else
+			{
+			// We're already delaying this record: Just piggy back
+			// this Log::write()'s context onto the current delay.
+			//
+			// This is kind of funky.
+			delay_info->StageWrite(stream, std::move(active_filters));
+			}
 
 		// Continued when timer expires or delay finished is called.
 		return true;
@@ -1257,27 +1289,33 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 	bool res = true;
 	if ( ! delay_info->vetoed )
 		{
-		// Run through all registered post delay callbacks just before
-		// handing the record over to the filters.
-		auto id = IntrusivePtr{NewRef{}, delay_info->stream->id};
-		bool allow = true;
-		for ( const auto& cb : delay_info->post_delay_callbacks )
+		// Do all the staged writes now
+		//
+		// XXX: post_delay_hooks() are only executed for the
+		//      Log::delay() calls pre-ceeding a Log::write().
+		for ( const auto& write : delay_info->staged_writes )
 			{
-			auto v = cb->Invoke(delay_info->columns, id);
-			if ( v )
-				allow &= v->AsBool();
+			// Run through all registered post delay callbacks just before
+			// handing the record over to the filters.
+			auto id = IntrusivePtr{NewRef{}, write.stream->id};
+			bool allow = true;
+			for ( const auto& cb : write.post_delay_callbacks )
+				{
+				auto v = cb->Invoke(delay_info->columns, id);
+				if ( v )
+					allow &= v->AsBool();
+				}
+
+			// XXX: This overwrites the result.
+			if ( allow )
+				res = WriteToFilters(write.stream->id, write.stream, write.filters,
+				                     delay_info->columns);
 			}
 
-		if ( allow )
-			res = WriteToFilters(delay_info->stream->id, delay_info->stream, delay_info->filters,
-			                     delay_info->columns);
+		// Release RecordValPtr
+		delay_info->columns = nullptr;
+		delay_block.erase(it);
 		}
-
-	// Release RecordValPtr
-	delay_info->columns = nullptr;
-
-	// XXX: This is wrong if the same record was written to multiple streams.
-	delay_block.erase(it);
 
 	return res;
 	}
