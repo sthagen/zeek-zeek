@@ -50,13 +50,13 @@ public:
 	double expire_time = 0.0;
 
 	// State for WriteToFilters() and only known at Manager::Write() time.
-	EnumVal* id;
 	Manager::Stream* stream;
 	std::vector<Manager::Filter*> filters;
 	std::vector<FuncPtr> post_delay_callbacks;
 
 	// Is this just veto?
 	bool vetoed = false;
+	bool delaying = false;
 	};
 
 struct Manager::Filter
@@ -131,9 +131,12 @@ struct Manager::Stream
 	// The delay queue.
 	std::list<std::shared_ptr<DelayInfo>> delay_queue;
 	Manager::LogDelayExpiredTimer* delay_timer = nullptr;
+	double max_delay_interval = 0.0;
+	zeek_uint_t max_delay_queue_size = 1;
 
 	~Stream();
 
+	void Enqueue(std::shared_ptr<DelayInfo> delay_info, std::vector<Manager::Filter*> filters);
 	void ArmLogDelayExpiredTimer(double t);
 	void DelayExpiredTimerDispatch(double t, bool is_expire);
 	};
@@ -193,6 +196,46 @@ Manager::Stream::~Stream()
 		delete *f;
 	}
 
+void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info,
+                              std::vector<Manager::Filter*> arg_filters)
+	{
+	delay_info->delaying = true;
+	delay_info->stream = this;
+	delay_info->filters = std::move(arg_filters);
+
+	double expire_time = run_state::network_time + max_delay_interval;
+
+	delay_info->expire_time = expire_time;
+	delay_queue.push_back(std::move(delay_info));
+
+	// If we exceeded the queue size, flush things out now.
+	//
+	// XXX: This will trigger Zeek script callbacks while another Log::write()
+	//      is currently in-flight.
+	//
+	//      We could also re-schedule the timer to 0.0 instead and allow
+	//      exceeding the size for a bit.
+	if ( delay_queue.size() > max_delay_queue_size )
+		{
+		delay_timer = nullptr;
+
+		while ( delay_queue.size() > max_delay_queue_size )
+			{
+			const auto& q_delay_info = delay_queue.front();
+
+			DBG_LOG(DBG_LOGGING, "Evicting record %p", q_delay_info->columns.get());
+			zeek::log_mgr->DelayDone(q_delay_info->columns);
+
+			delay_queue.pop_front();
+			}
+
+		ArmLogDelayExpiredTimer(delay_queue.front()->expire_time);
+		}
+
+	if ( delay_timer == nullptr )
+		ArmLogDelayExpiredTimer(expire_time);
+	}
+
 void Manager::Stream::ArmLogDelayExpiredTimer(double t)
 	{
 	assert(delay_timer == nullptr);
@@ -216,7 +259,7 @@ void Manager::Stream::DelayExpiredTimerDispatch(double t, bool is_expire)
 		// If columns in nullptr, it's gone.
 		if ( delay_info->columns != nullptr )
 			{
-			DBG_LOG(DBG_LOGGING, "delayed record %p expired", delay_info->columns.get());
+			DBG_LOG(DBG_LOGGING, "Delayed record %p expired", delay_info->columns.get());
 			zeek::log_mgr->DelayDone(delay_info->columns);
 			}
 
@@ -900,21 +943,9 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns.get(),
 		        it->second->delay_refs);
 
-		// TODO: What if this record has already been delayed?!
-		// Maybe on a different stream?
-		it->second->id = id;
-		it->second->stream = stream;
-		it->second->filters = std::move(active_filters);
+		stream->Enqueue(it->second, std::move(active_filters));
 
-		// XXX: Get expire delay form stream instead of hard-coding.
-		// TODO: Add this on Stream as a helper
-		//       so it's re-usable from elsewhere.
-		it->second->expire_time = run_state::network_time + 0.200;
-		stream->delay_queue.push_back(it->second);
-		if ( stream->delay_timer == nullptr )
-			stream->ArmLogDelayExpiredTimer(it->second->expire_time);
-
-		// Continued at a later point.
+		// Continued when timer expires or delay finished is called.
 		return true;
 		}
 
@@ -1126,14 +1157,19 @@ namespace
 void delay_block_housekeeping(DelayBlock& delay_block)
 	{
 	std::vector<DelayBlock::key_type> remove_keys;
-	for ( const auto& [ptr, _] : delay_block )
+	for ( const auto& [ptr, delay_info] : delay_block )
 		{
-		if ( ptr->RefCnt() == 1 )
+		// We're the last ones to hold a reference and the record
+		// was never delayed, save to ditch.
+		if ( ptr->RefCnt() == 1 && ! delay_info->delaying )
 			remove_keys.push_back(ptr);
 		}
 
 	for ( const auto ptr : remove_keys )
+		{
+		DBG_LOG(DBG_LOGGING, "delay block housekeeping removing %p", ptr);
 		delay_block.erase(ptr);
+		}
 	}
 
 	}
@@ -1203,6 +1239,7 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 	const auto& it = delay_block.find(p);
 	if ( it == delay_block.end() )
 		{
+		DBG_LOG(DBG_LOGGING, "Missing record %p", p);
 		reporter->Error("Missing record %p for DelayDone()", p);
 		return false;
 		}
@@ -1232,7 +1269,7 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 			}
 
 		if ( allow )
-			res = WriteToFilters(delay_info->id, delay_info->stream, delay_info->filters,
+			res = WriteToFilters(delay_info->stream->id, delay_info->stream, delay_info->filters,
 			                     delay_info->columns);
 		}
 
@@ -1670,6 +1707,39 @@ void Manager::SendAllWritersTo(const broker::endpoint_info& ei)
 			                             writer->NumFields(), writer->Fields(), ei);
 			}
 		}
+	}
+
+bool Manager::SetMaxDelayInterval(EnumVal* id, double delay)
+	{
+	Stream* stream = FindStream(id);
+	if ( ! stream )
+		return false;
+
+	DBG_LOG(DBG_LOGGING, "SetMaxDelayInterval: stream=%s max_delay=%f", stream->name.c_str(),
+	        delay);
+
+	// TODO: We rely on script land to protect us from not setting a lower
+	// value. We could possibly update the expiration time for all pending
+	// entries in the queue and start expiring.
+
+	stream->max_delay_interval = delay;
+
+	return true;
+	}
+
+bool Manager::SetMaxDelayQueueSize(EnumVal* id, zeek_uint_t queue_size)
+	{
+	Stream* stream = FindStream(id);
+	if ( ! stream )
+		return false;
+
+	DBG_LOG(DBG_LOGGING, "SetMaxDelayQueueSize: stream=%s queue_size=%ld", stream->name.c_str(),
+	        queue_size);
+
+	// TODO: Force expiration.
+	stream->max_delay_queue_size = queue_size;
+
+	return true;
 	}
 
 bool Manager::SetBuf(EnumVal* id, bool enabled)

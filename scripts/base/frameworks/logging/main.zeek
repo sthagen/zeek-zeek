@@ -215,6 +215,26 @@ export {
 	const Log::default_ext_func: function(path: string): any =
 		function(path: string) { } &redef;
 
+
+	## Log delay settings
+	##
+	## These defaults allow w for a maximum of 5000 queued log records
+	## per stream per worker per second.
+	##
+	## In a 10 worker setup with perfectly distributed log rates, this
+	## allows for up to 50k log records per second to be delayed before
+	## forcefully evicting records.
+	##
+	## Considerations for larger delays:
+	## * Data loss in face of worker crashes
+	## * Memory consumption
+	##
+	const max_delay_interval = 500msec &redef;
+
+	## Maximum length of the delay queue, per stream.
+	const max_delay_queue_size = 1000 &redef;
+
+
 	## A filter type describes how to customize logging streams.
 	type Filter: record {
 		## Descriptive name to reference this filter.
@@ -355,19 +375,6 @@ export {
 		policy: PolicyHook &optional;
 	};
 
-	## These defaults allow for a maximum of 5000 queued log records
-	## per stream per worker.
-	##
-	## In a 10 worker setup with perfectly distributed log rates, this
-	## allows for up to 50k log records per second to be delayed before
-	## forcefully evicting records at the head.
-	##
-	## Considerations for larger delays:
-	## * Data loss in face of worker crashes
-	## * Memory consumption
-	const max_delay_interval = 200msec &redef;
-	const max_delay_records = 1000 &redef;
-
 	## Type defining the content of a logging stream.
 	type Stream: record {
 		## A record type defining the log's columns.
@@ -408,7 +415,7 @@ export {
 		event_groups: set[string] &default=set();
 
 		max_delay_interval: interval &default=max_delay_interval;
-		max_delay_records: count &default=max_delay_records;
+		max_delay_queue_size: count &default=max_delay_queue_size;
 	};
 
 	## Sentinel value for indicating that a filter was not found when looked up.
@@ -635,7 +642,7 @@ export {
 	## reference.
 	##
 	## A record is at most delayed by the interval configured for the
-	## stream it is logged to, or otherwise the default Log::max_delay.
+	## stream it is logged to, or otherwise the default Log::max_delay_interval.
 	## If the delay queue of a stream would be exceeded, the oldest
 	## entry is expired. When the number of references is 0, the record
 	## is logged, regardless of any maximum timer.
@@ -659,10 +666,10 @@ export {
 	##
 	## TBD: We could support a flush/force for reducing with
 	##      the constraint that it'll flush the queue.
-	global set_max_delay_interval: function(id: Log::ID, delay: interval);
+	global set_max_delay_interval: function(id: Log::ID, max_delay: interval): bool;
 
 	## Seth the maximum number of records in the delay queue.
-	global set_max_delay_records: function(id: Log::ID, length: count);
+	global set_max_delay_queue_size: function(id: Log::ID, queue_size: count): bool;
 }
 
 global all_streams: table[ID] of Stream = table();
@@ -789,10 +796,32 @@ function Log::rotation_format_func(ri: Log::RotationFmtInfo): Log::RotationPath
 	return rval;
 	}
 
+# Keep maximum stream delays ever set around.
+global max_stream_delay_intervals: table[ID] of interval;
+global max_stream_delay_queue_sizes: table[ID] of count;
+
 function create_stream(id: ID, stream: Stream) : bool
 	{
 	if ( ! __create_stream(id, stream) )
 		return F;
+
+	# Restore max value of any prior set_max_delay_interval().
+	if ( id in max_stream_delay_intervals &&
+	     max_stream_delay_intervals[id] > stream$max_delay_interval )
+		stream$max_delay_interval = max_stream_delay_intervals[id];
+	else
+		max_stream_delay_intervals[id] = stream$max_delay_interval;
+
+	# Restore max value of any prior set_max_queue_size().
+	if ( id in max_stream_delay_queue_sizes &&
+	     max_stream_delay_queue_sizes[id] > stream$max_delay_queue_size )
+		stream$max_delay_queue_size = max_stream_delay_queue_sizes[id];
+	else
+		max_stream_delay_queue_sizes[id] = stream$max_delay_queue_size;
+
+	# Call the bifs directly.
+	Log::__set_max_delay_interval(id, stream$max_delay_interval);
+	Log::__set_max_delay_queue_size(id, stream$max_delay_queue_size);
 
 	active_streams[id] = stream;
 	all_streams[id] = stream;
@@ -949,8 +978,42 @@ function delay(rec: any, post_delay_cb: PostDelayCallback &default=empty_post_de
 	return Log::__delay(rec, post_delay_cb);
 	}
 
-
 function delay_finish(rec: any): bool
 	{
 	return Log::__delay_finish(rec);
+	}
+
+function set_max_delay_interval(id: Log::ID, max_delay: interval): bool
+	{
+	# Only allow setting larger values on active streams.
+	if ( id !in all_streams )
+		return F;
+
+	if ( all_streams[id]$max_delay_interval >= max_delay )
+		return T;
+
+	if ( ! Log::__set_max_delay_interval(id, max_delay) )
+		return F;
+
+	max_stream_delay_intervals[id] = max_delay;
+	all_streams[id]$max_delay_interval = max_delay;
+
+	return T;
+	}
+
+function set_max_delay_queue_size(id: Log::ID, max_size: count): bool
+	{
+	if ( id !in all_streams )
+		return F;
+
+	if ( all_streams[id]$max_delay_queue_size >= max_size )
+		return T;
+
+	if ( ! Log::__set_max_delay_queue_size(id, max_size) )
+		return F;
+
+	max_stream_delay_queue_sizes[id] = max_size;
+	all_streams[id]$max_delay_queue_size = max_size;
+
+	return T;
 	}

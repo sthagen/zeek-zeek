@@ -110,3 +110,15 @@ function Log::__delay_finish%(rec: any%): bool
 	bool result = zeek::log_mgr->DelayFinished(columns);
 	return zeek::val_mgr->Bool(result);
 	%}
+
+function Log::__set_max_delay_interval%(id: Log::ID, max_delay: interval%): bool
+	%{
+	bool result = zeek::log_mgr->SetMaxDelayInterval(id->AsEnumVal(), max_delay);
+	return zeek::val_mgr->Bool(result);
+	%}
+
+function Log::__set_max_delay_queue_size%(id: Log::ID, max_queue_size: count%): bool
+	%{
+	bool result = zeek::log_mgr->SetMaxDelayQueueSize(id->AsEnumVal(), max_queue_size);
+	return zeek::val_mgr->Bool(result);
+	%}

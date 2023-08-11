@@ -190,6 +190,9 @@ public:
 	 */
 	bool DelayDone(const RecordValPtr& columns);
 
+	bool SetMaxDelayInterval(EnumVal* id, double max_delay);
+	bool SetMaxDelayQueueSize(EnumVal* id, zeek_uint_t max_queue_length);
+
 	/**
 	 * Create a new log writer frontend. This is exposed so that the
 	 * communication system can recreate remote log streams locally.
