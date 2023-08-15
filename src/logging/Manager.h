@@ -178,7 +178,7 @@ public:
 	/**
 	 * TODO: Docs
 	 */
-	bool DelayFinished(const RecordValPtr& columns);
+	bool DelayFinish(const RecordValPtr& columns);
 
 	/**
 	 * The given RecordValPtr instance has finished delaying.

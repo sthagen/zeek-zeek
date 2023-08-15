@@ -107,7 +107,7 @@ function Log::__delay_finish%(rec: any%): bool
 	if ( ! columns )
 		return zeek::val_mgr->Bool(false);
 
-	bool result = zeek::log_mgr->DelayFinished(columns);
+	bool result = zeek::log_mgr->DelayFinish(columns);
 	return zeek::val_mgr->Bool(result);
 	%}
 

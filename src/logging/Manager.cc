@@ -1240,7 +1240,7 @@ bool Manager::Delay(RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	return true;
 	}
 
-bool Manager::DelayFinished(const RecordValPtr& columns_arg)
+bool Manager::DelayFinish(const RecordValPtr& columns_arg)
 	{
 	const auto* p = columns_arg.get();
 	DBG_LOG(DBG_LOGGING, "DelayFinish() for %p RefCnt=%d", p, p->RefCnt());
