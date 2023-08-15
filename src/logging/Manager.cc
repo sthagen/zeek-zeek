@@ -42,6 +42,7 @@ public:
 	struct StagedWrite
 		{
 		Manager::Stream* stream;
+		RecordValPtr columns; // RecordValPtr used for writing (possibly coerced)
 		std::vector<Manager::Filter*> filters;
 		std::vector<FuncPtr> post_delay_callbacks;
 		};
@@ -54,12 +55,15 @@ public:
 	DelayInfo& operator=(const DelayInfo&) = delete;
 
 	// Stage a write to a stream with a set of filters.
-	void StageWrite(Manager::Stream* stream, std::vector<Manager::Filter*> filters)
+	void StageWrite(Manager::Stream* stream, zeek::RecordValPtr columns,
+	                ::vector<Manager::Filter*> filters)
 		{
-		staged_writes.push_back({stream, std::move(filters), std::move(post_delay_callbacks)});
+		staged_writes.push_back(
+			{stream, std::move(columns), std::move(filters), std::move(post_delay_callbacks)});
 		post_delay_callbacks.clear();
 		}
 
+	// RecordValPtr used for delaying.
 	RecordValPtr columns;
 	// References (number of Log::delay() calls).
 	int delay_refs = 1;
@@ -152,7 +156,8 @@ struct Manager::Stream
 
 	~Stream();
 
-	void Enqueue(std::shared_ptr<DelayInfo> delay_info, std::vector<Manager::Filter*> filters);
+	void Enqueue(std::shared_ptr<DelayInfo> delay_info, const zeek::RecordValPtr columns,
+	             std::vector<Manager::Filter*> filters);
 	void ArmLogDelayExpiredTimer(double t);
 	void DelayExpiredTimerDispatch(double t, bool is_expire);
 	};
@@ -212,10 +217,10 @@ Manager::Stream::~Stream()
 		delete *f;
 	}
 
-void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info,
+void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info, zeek::RecordValPtr arg_columns,
                               std::vector<Manager::Filter*> arg_filters)
 	{
-	delay_info->StageWrite(this, std::move(arg_filters));
+	delay_info->StageWrite(this, std::move(arg_columns), std::move(arg_filters));
 	delay_info->delaying = true;
 
 	double expire_time = run_state::network_time + max_delay_interval;
@@ -935,7 +940,8 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		active_filters.push_back(filter);
 		}
 
-	const auto& it = delay_block.find(columns.get());
+	// This uses columns_arg (the non-coerced pointer)
+	const auto& it = delay_block.find(columns_arg);
 
 	if ( active_filters.empty() )
 		{
@@ -946,7 +952,8 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		//
 		// Not sure this is a good idea though as we're keeping
 		// state for something that's essentially gone, but it
-		// allows some validity checks for script usages.
+		// allows some validity checks of Log::delay_finish()
+		// calls in the face of vetoing.
 		if ( it != delay_block.end() )
 			it->second->vetoed = true;
 
@@ -956,8 +963,7 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 	if ( it != delay_block.end() )
 		{
 		const auto& delay_info = it->second;
-		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns.get(),
-		        delay_info->delay_refs);
+		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns_arg, delay_info->delay_refs);
 
 		// First time we see a Log::Write() for this record, enqueue
 		// it to the first stream.
@@ -966,7 +972,7 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		// these semantics seem reasonable.
 		if ( ! delay_info->delaying )
 			{
-			stream->Enqueue(delay_info, std::move(active_filters));
+			stream->Enqueue(delay_info, columns, std::move(active_filters));
 			}
 		else
 			{
@@ -974,7 +980,7 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 			// this Log::write()'s context onto the current delay.
 			//
 			// This is kind of funky.
-			delay_info->StageWrite(stream, std::move(active_filters));
+			delay_info->StageWrite(stream, columns, std::move(active_filters));
 			}
 
 		// Continued when timer expires or delay finished is called.
@@ -1301,19 +1307,19 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 			bool allow = true;
 			for ( const auto& cb : write.post_delay_callbacks )
 				{
-				auto v = cb->Invoke(delay_info->columns, id);
+				auto v = cb->Invoke(write.columns, id);
 				if ( v )
 					allow &= v->AsBool();
 				}
 
 			// XXX: This overwrites the result.
 			if ( allow )
-				res = WriteToFilters(write.stream->id, write.stream, write.filters,
-				                     delay_info->columns);
+				res = WriteToFilters(write.stream->id, write.stream, write.filters, write.columns);
 			}
 
-		// Release RecordValPtr
+		// Release all RecordValPtr
 		delay_info->columns = nullptr;
+		delay_info->staged_writes.clear();
 		delay_block.erase(it);
 		}
 
