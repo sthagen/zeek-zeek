@@ -44,8 +44,8 @@ event new_connection(c: connection)
 	local info3 = Info($ts=network_time(), $msg="third");
 	Log::write(LOG, info3);
 	}
-
 @TEST-END-FILE test.zeek
+
 hook Log::log_stream_policy(rec: Info, id: Log::ID)
 	{
 	if ( id != LOG )
@@ -71,8 +71,9 @@ hook Log::log_stream_policy(rec: Info, id: Log::ID)
 
 	if ( rec$msg == "third" ) # Delay and directly delay_finish the third record.
 		{
-		local token3 = Log::delay(id, rec, function(recx: Info, idx: Log::ID): bool {
+		local token3 = Log::delay(id, rec, function[rec](recx: Info, idx: Log::ID): bool {
 			print network_time(), "callback third";
+			rec$msg = fmt("%s was delayed by %s", rec$msg, network_time() - rec$ts);
 			return T;
 		});
 
@@ -91,8 +92,9 @@ hook Log::log_stream_policy(rec: Info, id: Log::ID)
 
 	if ( rec$msg == "first" ) # Delay only the first record.
 		{
-		local token1 = Log::delay(id, rec, function(recx: Info, idx: Log::ID): bool {
+		local token1 = Log::delay(id, rec, function[rec](recx: Info, idx: Log::ID): bool {
 			print network_time(), "callback first";
+			rec$msg = fmt("%s was delayed by %s", rec$msg, network_time() - rec$ts);
 			return T;
 		});
 
@@ -101,7 +103,6 @@ hook Log::log_stream_policy(rec: Info, id: Log::ID)
 		timeout 100msec
 			{
 			print network_time(), "when timeout";
-			rec$msg = fmt("%s was delayed %s", rec$msg, network_time());
 			Log::delay_finish(id, rec, token1);
 			}
 		}

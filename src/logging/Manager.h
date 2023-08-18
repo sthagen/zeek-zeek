@@ -33,11 +33,17 @@ namespace logging
 	{
 
 class DelayInfo;
-using DelayBlock = std::unordered_map<const zeek::RecordVal*, std::shared_ptr<DelayInfo>>;
 
 class WriterFrontend;
 class RotationFinishedMessage;
 class RotationTimer;
+
+struct ActiveWrite
+	{
+	EnumValPtr id = nullptr;
+	RecordValPtr rec = nullptr;
+	int64_t idx = 0;
+	};
 
 /**
  * Singleton class for managing log streams.
@@ -173,22 +179,12 @@ public:
 	 * @param post_delay_cb A Zeek callback function to invoke when the
 	 * delay completed or nullptr.
 	 */
-	bool Delay(const EnumValPtr& id, const RecordValPtr columns, FuncPtr post_delay_cb);
+	ValPtr Delay(const EnumValPtr& id, const RecordValPtr columns, FuncPtr post_delay_cb);
 
 	/**
 	 * TODO: Docs
 	 */
 	bool DelayFinish(const EnumValPtr& id, const RecordValPtr& columns, const ValPtr& token);
-
-	/**
-	 * The given RecordValPtr instance has finished delaying.
-	 * Either Undelay() was called often enough, or its timer
-	 * has expired.
-	 *
-	 * TBD: This could be private, but would need friending with
-	 * the timer then?
-	 */
-	bool DelayDone(const RecordValPtr& columns);
 
 	bool SetMaxDelayInterval(EnumVal* id, double max_delay);
 	bool SetMaxDelayQueueSize(EnumVal* id, zeek_uint_t max_queue_length);
@@ -346,6 +342,8 @@ private:
 	bool WriteToFilters(EnumVal* id, Stream* stream, const std::vector<Filter*>& filters,
 	                    const RecordValPtr& columns);
 
+	bool DelayDone(Manager::Stream* stream, DelayInfo& delay_info);
+
 	std::vector<Stream*> streams; // Indexed by stream enum.
 	int rotations_pending; // Number of rotations not yet finished.
 	FuncPtr rotation_format_func;
@@ -354,8 +352,8 @@ private:
 	telemetry::IntCounterFamily total_log_stream_writes_family;
 	telemetry::IntCounterFamily total_log_writer_writes_family;
 
-	// State information about delayed log records.
-	DelayBlock delay_block;
+	// TODO: Nested writes?
+	ActiveWrite active_write = {};
 	};
 
 	} // namespace logging;

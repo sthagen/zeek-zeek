@@ -30,49 +30,44 @@ using namespace std;
 
 namespace zeek::logging
 	{
-// DelayInfo tracks information for the delay state of a record value
-// that most often is a log record eventually sent through Log::Write()
+// DelayInfo tracks information of a (Stream, Record) tuple that
+// was marked for delaying. The stream is implicit due to keeping
+// DelayInfo as part of a stream.
 //
-// For every Log::Write() happening for such a record WriteInfo records
-// are held tracking filters and delay hooks to execute.
-
+// DelayInfo tracks the filters to pass the record to and any
+// registered post delay callbacks.
 class DelayInfo
 	{
 public:
-	struct StagedWrite
+	explicit DelayInfo(const zeek::RecordValPtr columns, int64_t token,
+	                   const zeek::ValPtr token_val)
+		: columns(columns), token(token), token_val(token_val)
 		{
-		Manager::Stream* stream;
-		RecordValPtr columns; // RecordValPtr used for writing (possibly coerced)
-		std::vector<Manager::Filter*> filters;
-		std::vector<FuncPtr> post_delay_callbacks;
-		};
-
-	explicit DelayInfo(const zeek::RecordValPtr columns) : columns(std::move(columns)) { }
+		}
 
 	// No copy or assignment of DelayInfo itself, should
-	// always be managed as a shared_ptr.
+	// always be managed as a shared pointer.
 	DelayInfo(const DelayInfo&) = delete;
 	DelayInfo& operator=(const DelayInfo&) = delete;
 
-	// Stage a write to a stream with a set of filters.
-	void StageWrite(Manager::Stream* stream, zeek::RecordValPtr columns,
-	                ::vector<Manager::Filter*> filters)
-		{
-		staged_writes.push_back(
-			{stream, std::move(columns), std::move(filters), std::move(post_delay_callbacks)});
-		post_delay_callbacks.clear();
-		}
-
-	// RecordValPtr used for delaying.
+	// This represents the log record being delayed, potentially after coercion.
 	RecordValPtr columns;
-	// References (number of Log::delay() calls).
+	// References - number of Log::delay() calls.
 	int delay_refs = 1;
-	// Stamped during Log::write()
+
+	// Identifier of this write
+	int64_t token = 0;
+	ValPtr token_val = nullptr;
+
+	// Filters to pass this record to. These are determined during Log::write()
+	// after all hooks have executed.
+	std::vector<Manager::Filter*> filters;
+
+	// Stamped during Log::write().
 	double expire_time = 0.0;
 
 	// State for WriteToFilters() and only known at Manager::Write() time.
 	std::vector<FuncPtr> post_delay_callbacks;
-	std::vector<StagedWrite> staged_writes;
 
 	// Is this just veto?
 	bool vetoed = false;
@@ -130,6 +125,10 @@ struct Manager::WriterInfo
 	WriterInfo(telemetry::IntCounter total_writes) : total_writes(total_writes) { }
 	};
 
+using DelayBlock = std::map<const zeek::RecordVal*, std::shared_ptr<DelayInfo>>;
+using PendingBlock = std::unordered_map<int64_t, std::shared_ptr<DelayInfo>>;
+using DelayQueue = std::list<std::shared_ptr<DelayInfo>>;
+
 struct Manager::Stream
 	{
 	EnumVal* id = nullptr;
@@ -149,16 +148,23 @@ struct Manager::Stream
 
 	std::optional<telemetry::IntCounter> total_writes; // Initialized on first write.
 
-	// The delay queue.
-	std::list<std::shared_ptr<DelayInfo>> delay_queue;
+	// State about delayed records for this Stream.
+	DelayQueue delay_queue;
+	// State about "to be delayed records". At this point there's
+	// supposed to be just a single entry and this is over-complicating
+	// things a bit, but if we start to allow Log::delay() outside of
+	// hooks, this is probably required.
+	DelayBlock staged_delays;
+	// All pending writes indexed by a "token".
+	PendingBlock pending_writes;
+
 	Manager::LogDelayExpiredTimer* delay_timer = nullptr;
 	double max_delay_interval = 0.0;
 	zeek_uint_t max_delay_queue_size = 1;
 
 	~Stream();
 
-	void Enqueue(std::shared_ptr<DelayInfo> delay_info, const zeek::RecordValPtr columns,
-	             std::vector<Manager::Filter*> filters);
+	void Enqueue(std::shared_ptr<DelayInfo> delay_info, std::vector<Filter*> filters);
 	void ArmLogDelayExpiredTimer(double t);
 	void DelayExpiredTimerDispatch(double t, bool is_expire);
 	};
@@ -218,16 +224,15 @@ Manager::Stream::~Stream()
 		delete *f;
 	}
 
-void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info, zeek::RecordValPtr arg_columns,
-                              std::vector<Manager::Filter*> arg_filters)
+void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info, std::vector<Filter*> filters)
 	{
-	delay_info->StageWrite(this, std::move(arg_columns), std::move(arg_filters));
 	delay_info->delaying = true;
+	delay_info->filters = std::move(filters);
 
 	double expire_time = run_state::network_time + max_delay_interval;
 
 	delay_info->expire_time = expire_time;
-	delay_queue.push_back(std::move(delay_info));
+	delay_queue.push_back(delay_info);
 
 	// If we exceeded the queue size, flush things out now.
 	//
@@ -245,12 +250,20 @@ void Manager::Stream::Enqueue(std::shared_ptr<DelayInfo> delay_info, zeek::Recor
 			const auto& q_delay_info = delay_queue.front();
 
 			DBG_LOG(DBG_LOGGING, "Evicting record %p", q_delay_info->columns.get());
-			zeek::log_mgr->DelayDone(q_delay_info->columns);
+			zeek::log_mgr->DelayDone(this, *q_delay_info);
 
 			delay_queue.pop_front();
 			}
 
 		ArmLogDelayExpiredTimer(delay_queue.front()->expire_time);
+		}
+
+	// If all Log::delay() calls resolved during hook execution,
+	// call DelayDone() immediately.
+	if ( delay_info->delay_refs == 0 )
+		{
+		zeek::log_mgr->DelayDone(this, *delay_info);
+		return;
 		}
 
 	if ( delay_timer == nullptr )
@@ -281,7 +294,7 @@ void Manager::Stream::DelayExpiredTimerDispatch(double t, bool is_expire)
 		if ( delay_info->columns != nullptr )
 			{
 			DBG_LOG(DBG_LOGGING, "Delayed record %p expired", delay_info->columns.get());
-			zeek::log_mgr->DelayDone(delay_info->columns);
+			zeek::log_mgr->DelayDone(this, *delay_info);
 			}
 
 		delay_queue.pop_front();
@@ -884,6 +897,18 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		return false;
 		}
 
+	if ( ! stream->total_writes )
+		{
+		std::string module_name = detail::extract_module_name(stream->name.c_str());
+		std::initializer_list<telemetry::LabelView> labels{{"module", module_name},
+		                                                   {"stream", stream->name}};
+		stream->total_writes = total_log_stream_writes_family.GetOrAdd(labels);
+		}
+
+	stream->total_writes->Inc();
+
+	active_write = {{zeek::NewRef{}, id}, columns, stream->total_writes->Value()};
+
 	// Raise the log event.
 	if ( stream->event )
 		event_mgr.Enqueue(stream->event, columns);
@@ -902,17 +927,6 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 			stream_veto = true;
 			}
 		}
-
-	if ( ! stream->total_writes )
-		{
-		std::string module_name = detail::extract_module_name(stream->name.c_str());
-		std::initializer_list<telemetry::LabelView> labels{{"module", module_name},
-		                                                   {"stream", stream->name}};
-		stream->total_writes = total_log_stream_writes_family.GetOrAdd(labels);
-		}
-
-	stream->total_writes->Inc();
-
 	// Run through all filters, execute their hooks and keep
 	// those where we actually want to send records to.
 	std::vector<Filter*> active_filters;
@@ -941,50 +955,34 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 		active_filters.push_back(filter);
 		}
 
-	// This uses columns_arg (the non-coerced pointer)
-	const auto& it = delay_block.find(columns_arg);
+	// After running the hooks, reset the active write.
+	int64_t write_index = active_write.idx;
+	active_write = {};
+
+	const auto& it = stream->staged_delays.find(columns.get());
 
 	if ( active_filters.empty() )
 		{
-		// All filters vetoed, so there's nothing to do here
-		// other then marking the delay info as such. We'll
-		// still be waiting for Log::delay_finish() calls or
-		// the expiration timer for cleanup.
-		//
-		// Not sure this is a good idea though as we're keeping
-		// state for something that's essentially gone, but it
-		// allows some validity checks of Log::delay_finish()
-		// calls in the face of vetoing.
-		if ( it != delay_block.end() )
-			it->second->vetoed = true;
+		// All filters vetoed so there's nothing to do here.
+		// DelayFinish() for such a record is a noop.
+		if ( it != stream->staged_delays.end() )
+			stream->staged_delays.erase(it);
 
 		return true;
 		}
 
-	if ( it != delay_block.end() )
+	// Okay, this record was delayed.
+	if ( it != stream->staged_delays.end() )
 		{
 		const auto& delay_info = it->second;
 		delay_info->after_hooks = true;
 		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns_arg, delay_info->delay_refs);
 
-		// This write was delayed during the execution of hooks,
-		// so we should suspend the write now.
-		if ( ! delay_info->delaying )
-			{
-			stream->Enqueue(delay_info, columns, std::move(active_filters));
-			}
-		else
-			{
-			// We're already delaying this record: Just piggy back
-			// this Log::write()'s context onto the current delay.
-			//
-			// This is kind of funky.
-			delay_info->StageWrite(stream, columns, std::move(active_filters));
-			}
+		// This write was delayed during the execution of hooks, delegate
+		// enqueuing to the stream to figure out details.
+		stream->Enqueue(delay_info, std::move(active_filters));
 
-		// All delays resolved during the hooks already, call Done() now.
-		if ( delay_info->delay_refs == 0 )
-			DelayDone(columns);
+		stream->staged_delays.erase(it);
 
 		return true;
 		}
@@ -1215,21 +1213,39 @@ void delay_block_housekeeping(DelayBlock& delay_block)
 
 	}
 
-bool Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, FuncPtr post_delay_cb)
+ValPtr Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	{
-	const auto* p = columns_arg.get();
-	const auto& it = delay_block.find(p);
-	if ( it == delay_block.end() )
+	if ( active_write.id != id || active_write.rec != columns_arg )
 		{
-		const auto& iit = delay_block
-		                      .emplace(
-								  p, std::move(std::make_shared<DelayInfo>(std::move(columns_arg))))
+		reporter->RuntimeError(nullptr, "Invalid Log::delay() call (write_active=%d)",
+		                       active_write.id != nullptr);
+		}
+
+	Stream* stream = FindStream(id.get());
+	auto& staged_delays = stream->staged_delays;
+	const auto* p = columns_arg.get();
+	const auto& it = staged_delays.find(p);
+
+	ValPtr token_val;
+
+	if ( it == staged_delays.end() )
+		{
+		int64_t token = active_write.idx;
+		token_val = zeek::val_mgr->Count(token);
+		const auto& iit = staged_delays
+		                      .emplace(p, std::move(std::make_shared<DelayInfo>(
+											  columns_arg, active_write.idx, token_val)))
 		                      .first;
 		if ( post_delay_cb )
 			iit->second->post_delay_callbacks.emplace_back(post_delay_cb);
+
+		// Also keep information via the token, so DelayFinish() works
+		// immediately afterwards.
+		stream->pending_writes[token] = iit->second;
 		}
 	else
 		{
+		token_val = it->second->token_val;
 		++it->second->delay_refs;
 		if ( post_delay_cb )
 			it->second->post_delay_callbacks.emplace_back(post_delay_cb);
@@ -1244,52 +1260,54 @@ bool Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, FuncPt
 	//
 	// Basically, any records in delay_block with a reference count
 	// of 1 can be freed because we're the last ones to hold a reference.
-	delay_block_housekeeping(delay_block);
+	// delay_block_housekeeping(delay_block);
 
-	return true;
+	return token_val;
 	}
 
 bool Manager::DelayFinish(const EnumValPtr& id, const RecordValPtr& columns_arg,
-                          const ValPtr& token)
+                          const ValPtr& token_val)
 	{
+	Stream* stream = FindStream(id.get());
+	if ( ! stream )
+		return false;
+
+	int64_t token = token_val->AsCount();
+	const auto& it = stream->pending_writes.find(token);
+
 	const auto* p = columns_arg.get();
 	DBG_LOG(DBG_LOGGING, "DelayFinish() for %p RefCnt=%d", p, p->RefCnt());
 
-	const auto& it = delay_block.find(p);
-	if ( it == delay_block.end() )
+	if ( it == stream->pending_writes.end() )
 		{
-		reporter->Warning("DelayFinish(): Non-existing log record %p", p);
+		reporter->Warning("DelayFinish(): Non-existing log record token=%ld %p", token, p);
 		return false;
 		}
 
-	const auto& delay_info = it->second;
+	auto& delay_info = it->second;
 
 	--delay_info->delay_refs;
 
 	if ( delay_info->after_hooks && delay_info->delay_refs == 0 )
-		{
-		DelayDone(delay_info->columns);
-
-		return true;
-		}
+		DelayDone(stream, *delay_info);
 
 	return true;
 	}
 
-bool Manager::DelayDone(const RecordValPtr& columns_arg)
+// Delaying this record has completed.
+bool Manager::DelayDone(Stream* stream, DelayInfo& delay_info)
 	{
-	const auto* p = columns_arg.get();
-	const auto& it = delay_block.find(p);
-	if ( it == delay_block.end() )
+	const auto& it = stream->pending_writes.find(delay_info.token);
+	if ( it == stream->pending_writes.end() )
 		{
-		DBG_LOG(DBG_LOGGING, "Missing record %p", p);
-		reporter->Error("Missing record %p for DelayDone()", p);
+		reporter->Error("Missing delay info for token %ld / %p for DelayDone()", delay_info.token,
+		                delay_info.columns.get());
 		return false;
 		}
 
-	DBG_LOG(DBG_LOGGING, "DelayDone for log record %p RefCnt=%d", p, p->RefCnt());
+	DBG_LOG(DBG_LOGGING, "DelayDone for log record %p RefCnt=%d", delay_info.columns.get(),
+	        delay_info.columns->RefCnt());
 
-	const auto& delay_info = it->second;
 	// TODO: What if the stream vanished? Well, in the best case we never
 	//       get here, but we should cancel the timer.
 	// TODO: What if a filter vanished and we're still delaying records?
@@ -1298,36 +1316,28 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 	//		 filter from those.
 
 	bool res = true;
-	if ( ! delay_info->vetoed )
+	if ( ! delay_info.vetoed )
 		{
-		// Do all the staged writes now
-		//
-		// XXX: post_delay_hooks() are only executed for the
-		//      Log::delay() calls pre-ceeding a Log::write().
-		for ( const auto& write : delay_info->staged_writes )
+		// Run through all registered post delay callbacks just before
+		// handing the record over to the filters.
+		auto id = IntrusivePtr{NewRef{}, stream->id};
+		bool allow = true;
+		for ( const auto& cb : delay_info.post_delay_callbacks )
 			{
-			// Run through all registered post delay callbacks just before
-			// handing the record over to the filters.
-			auto id = IntrusivePtr{NewRef{}, write.stream->id};
-			bool allow = true;
-			for ( const auto& cb : write.post_delay_callbacks )
-				{
-				auto v = cb->Invoke(write.columns, id);
-				if ( v )
-					allow &= v->AsBool();
-				}
-
-			// XXX: This overwrites the result.
-			if ( allow )
-				res = WriteToFilters(write.stream->id, write.stream, write.filters, write.columns);
+			auto v = cb->Invoke(delay_info.columns, id);
+			if ( v )
+				allow &= v->AsBool();
 			}
 
-		// Release all RecordValPtr
-		delay_info->columns = nullptr;
-		delay_info->staged_writes.clear();
-		delay_block.erase(it);
+		DBG_LOG(DBG_LOGGING, "DelayDone post_delay_callback outcome=%d", allow);
+		if ( allow )
+			res = WriteToFilters(stream->id, stream, delay_info.filters, delay_info.columns);
 		}
 
+	// Release all RecordValPtr
+	delay_info.columns = nullptr;
+	delay_info.filters.clear();
+	stream->pending_writes.erase(it);
 	return res;
 	}
 

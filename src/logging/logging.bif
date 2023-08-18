@@ -97,8 +97,7 @@ function Log::__delay%(id: Log::ID, rec: any, post_delay_cb: PostDelayCallback%)
 	if ( post_delay_cb_ptr == empty_post_delay_cb_ptr )
 		post_delay_cb_ptr = Func::nil;
 
-	bool result = zeek::log_mgr->Delay({zeek::NewRef{}, id->AsEnumVal()}, columns, post_delay_cb_ptr);
-	return zeek::val_mgr->Bool(result);
+	return zeek::log_mgr->Delay({zeek::NewRef{}, id->AsEnumVal()}, columns, post_delay_cb_ptr);
 	%}
 
 function Log::__delay_finish%(id: Log::ID, rec: any, token: Log::DelayToken%): bool
