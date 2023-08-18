@@ -34,6 +34,21 @@ event zeek_init()
 
 @TEST-END-FILE test.zeek
 
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
+	{
+	if ( id != LOG )
+		return;
+
+	print network_time(), "log_stream_policy", id, rec;
+
+	Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb", rec2;
+		rec2$msg = fmt("%s was delayed %s", rec2$msg, network_time());
+		return T;
+	});
+
+	}
+
 event new_connection(c: connection)
 	{
 	print network_time(), "new_connection", c$uid;
@@ -41,29 +56,13 @@ event new_connection(c: connection)
 	# Using an anonymous record type with field reordering.
 	#
 	# This is quirky: Because internally this record is coerced
-	# very early on, the delay pipeline works with a different
-	# record an any modifications other then those in
-	# a callback won't be visible.
-	local info = [$msg="no-late-update", $ts=network_time()];
-
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb", rec;
-		return T;
-	});
+	# very early on, the hooks and delay pipeline work with a different
+	# record val ptr. So an update of this record is not visible!
+	local info = [$msg="initial-value", $ts=network_time()];
 
 	Log::write(LOG, info);
 
-	# Not visible (1)
+	# Not visible due to coercion.
+	print network_time(), "after write";
 	info$msg = "after-write";
-
-	when [info] ( T == F )
-		{
-		# never ever.
-		}
-	timeout 10msec
-		{
-		print network_time(), "when timeout";
-		# Not visible (2)
-		info$msg = fmt("delayed %s", network_time());
-		}
 	}

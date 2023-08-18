@@ -32,137 +32,106 @@ event zeek_init()
 	Log::create_stream(LOG, [$columns=Info, $path="test"]);
 	}
 
-@TEST-END-FILE test.zeek
-
-# Basic delay() test, no delay_finish()
 event new_connection(c: connection)
 	{
 	print network_time(), "new_connection", c$uid;
-	local info = Info($ts=network_time(), $msg="no-late-update");
+	local info = Info($ts=network_time(), $msg="inital-value");
+	Log::write(LOG, info);
+	}
+@TEST-END-FILE test.zeek
 
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb";
+# Basic delay() test, no delay_finish()
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
+	{
+	if ( id != LOG )
+		return;
+
+	print network_time(), "log_stream_policy", id, rec;
+
+	Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb", rec2;
 		return T;
 	});
-	Log::write(LOG, info);
 
-	when [info] ( T == F )
-		{
-		# never ever.
-		}
-	timeout 10msec
+	when [rec] ( T == F ) { } timeout 10msec
 		{
 		print network_time(), "when timeout";
-		info$msg = fmt("delayed %s", network_time());
+		rec$msg = fmt("%s delayed %s", rec$msg, network_time());
 		}
 	}
 
 # @TEST-START-NEXT
 # Basic delay() test with delay_finish(), expect callback to be invoked
 # right at Log::delay_finish()
-event new_connection(c: connection)
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
 	{
-	print network_time(), "new_connection", c$uid;
-	local info = Info($ts=network_time(), $msg="no-late-update");
+	if ( id != LOG )
+		return;
 
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb";
+	print network_time(), "log_stream_policy", id, rec;
+
+	local token = Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb", rec2;
 		return T;
 	});
-	Log::write(LOG, info);
 
-	when [info] ( T == F )
-		{
-		# never ever.
-		}
-	timeout 10msec
+	when [id, rec, token] ( T == F ) { } timeout 10msec
 		{
 		print network_time(), "when timeout";
-		info$msg = fmt("delayed %s", network_time());
-		Log::delay_finish(info);
+		rec$msg = fmt("%s delayed %s", rec$msg, network_time());
+		Log::delay_finish(id, rec, token);
 		}
 	}
 
 # @TEST-START-NEXT
 # Basic delay() test with two callbacks but just one Log::delay_finish() call.
-# Relies on the timeout for expiration.
-event new_connection(c: connection)
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
 	{
-	print network_time(), "new_connection", c$uid;
-	local info = Info($ts=network_time(), $msg="no-late-update");
+	if ( id != LOG )
+		return;
 
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb - 1";
+	print network_time(), "log_stream_policy", id, rec;
+
+	local token1 = Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb - 1", rec2;
 		return T;
 	});
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb - 2";
+	local token2 = Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb - 2", rec2;
 		return T;
 	});
-	Log::write(LOG, info);
 
-	when [info] ( T == F )
-		{
-		# never ever.
-		}
-	timeout 10msec
+	when [id, rec, token1] ( T == F ) { } timeout 10msec
 		{
 		print network_time(), "when timeout";
-		info$msg = fmt("delayed %s", network_time());
-		Log::delay_finish(info);
+		rec$msg = fmt("%s delayed %s", rec$msg, network_time());
+		Log::delay_finish(id, rec, token1);
 		}
 	}
 
 # @TEST-START-NEXT
 # Basic delay() test two callbacks and two Log::delay_finish() calls
-event new_connection(c: connection)
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
 	{
-	print network_time(), "new_connection", c$uid;
-	local info = Info($ts=network_time(), $msg="no-late-update");
+	if ( id != LOG )
+		return;
 
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb - 1";
+	print network_time(), "log_stream_policy", id, rec;
+
+	local token1 = Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb - 1", rec2;
 		return T;
 	});
-	Log::delay(info, function(rec: any, id: Log::ID): bool {
-		print network_time(), "post_delay_cb - 2";
+	local token2 = Log::delay(LOG, rec, function(rec2: Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb - 2", rec2;
 		return T;
 	});
-	Log::write(LOG, info);
 
-	when [info] ( T == F )
-		{
-		# never ever.
-		}
-	timeout 10msec
+	when [id, rec, token1, token2] ( T == F ) { } timeout 10msec
 		{
 		print network_time(), "when timeout";
-		info$msg = fmt("delayed %s", network_time());
-		Log::delay_finish(info);
-		Log::delay_finish(info);
+		rec$msg = fmt("%s delayed %s", rec$msg, network_time());
+		Log::delay_finish(id, rec, token1);
+		Log::delay_finish(id, rec, token2);
 		}
-	}
-
-# @TEST-START-NEXT
-# Create a log entry per packet, delay() each and delay_finish() it on the next packet.
-
-global last_info: Info = Info($ts=double_to_time(0.0), $msg="init");
-
-event new_packet(c: connection, p: pkt_hdr)
-	{
-	# Undelay any pending packet.
-	if ( last_info$ts > double_to_time(0.0) )
-		Log::delay_finish(last_info);
-
-	last_info = Info($ts=network_time(), $msg=fmt("packet number %s", packet_count));
-
-	local my_packet_count = packet_count;
-	Log::delay(last_info, function [my_packet_count](rec: Info, id: Log::ID): bool {
-		print network_time(), "post_delay_cb", rec;
-
-		# Only log event numbered packets, but decide after delaying.
-		return my_packet_count % 2 == 0;
-	});
-
-	Log::write(LOG, last_info);
 	}

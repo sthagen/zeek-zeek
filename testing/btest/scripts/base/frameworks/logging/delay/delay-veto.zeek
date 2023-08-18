@@ -9,18 +9,14 @@
 
 hook Conn::log_policy(rec: Conn::Info, id: Log::ID, filter: Log::Filter)
 	{
-	print "veto", rec$uid;
+	print network_time(), "veto", rec$uid;
 	break;
 	}
 
-event connection_state_remove(c: connection) &priority=0
+hook Conn::log_policy(rec: Conn::Info, id: Log::ID, filter: Log::Filter) &priority=5
 	{
-	print "delay", c$uid;
-	Log::delay(c$conn);
-	}
-
-event connection_state_remove(c: connection) &priority=-10
-	{
-	print "delay_finish", c$uid;
-	Log::delay_finish(c$conn);
+	print network_time(), "delay", rec$uid;
+	Log::delay(id, rec, function(rec2: Conn::Info, id2: Log::ID): bool {
+		print network_time(), "post_delay_cb - not invoked", rec2;
+	});
 	}

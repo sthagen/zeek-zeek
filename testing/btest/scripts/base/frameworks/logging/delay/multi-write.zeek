@@ -40,6 +40,32 @@ type Info: record {
 @TEST-END-FILE test.zeek
 
 # Just call Log::write() twice on the same record.
+global write_count = 0;
+
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
+	{
+	if ( id != LOG )
+		return;
+
+	++write_count;
+	print network_time(), "log_stream_policy", id, write_count, rec;
+
+	if ( write_count % 4 == 0 )
+		{
+		print network_time(), "do_delay", id, write_count, rec;
+		Log::delay(id, rec, function(rec2: Info, id2: Log::ID): bool {
+			print network_time(), "post_delay_cb", rec2;
+			rec2$post_ts = network_time();
+			return T;
+		});
+
+		when [rec] ( T == F ) { } timeout 10msec
+			{
+			print network_time(), "when timeout";
+			rec$msg = fmt("%s delayed %s", rec$msg, network_time());
+			}
+		}
+	}
 
 event zeek_init()
 	{
@@ -50,12 +76,6 @@ event new_packet(c: connection, p: pkt_hdr)
 	{
 	# Undelay any pending packet.
 	local info = Info($ts=network_time(), $msg=fmt("packet number %s", packet_count));
-
-	Log::delay(info, function(rec: Info, id: Log::ID): bool {
-		rec$post_ts = network_time();
-		print network_time(), "post_delay_cb", id, rec;
-		return T;
-	});
 
 	Log::write(LOG, info);
 	Log::write(LOG, info);
@@ -72,60 +92,42 @@ redef enum Log::ID += {
 	LOG_OTHER
 };
 
-event zeek_init()
+global write_count = 0;
+
+hook Log::log_stream_policy(rec: Info, id: Log::ID)
 	{
-	Log::create_stream(LOG, [$columns=Info, $path="test", $max_delay_interval=1msec]);
-	Log::create_stream(LOG_OTHER, [$columns=Info, $path="test-other"]);
+	if ( id != LOG && id != LOG_OTHER )
+		return;
+
+	++write_count;
+	print network_time(), "log_stream_policy", id, write_count, rec;
+
+	if ( write_count % 4 == 0 ) {
+		print network_time(), "do_delay", id, write_count, rec;
+		Log::delay(id, rec, function(rec2: Info, id2: Log::ID): bool {
+			print network_time(), "post_delay_cb", rec2;
+			rec2$post_ts = network_time();
+			return T;
+		});
+
+		when [rec] ( T == F ) { } timeout 10msec
+			{
+			print network_time(), "when timeout";
+			rec$msg = fmt("%s delayed %s", rec$msg, network_time());
+			}
+		}
 	}
-
-event new_packet(c: connection, p: pkt_hdr)
-	{
-	# Undelay any pending packet.
-	local info = Info($ts=network_time(), $msg=fmt("packet number %s", packet_count));
-
-	Log::delay(info, function(rec: Info, id: Log::ID): bool {
-		rec$post_ts = network_time();
-		print network_time(), "post_delay_cb", id, rec;
-		return T;
-	});
-
-	Log::write(LOG, info);
-	Log::write(LOG_OTHER, info);
-	}
-
-
-# @TEST-START-NEXT
-#
-# Same as above, but insert another callback.
-
-redef enum Log::ID += {
-	LOG_OTHER
-};
 
 event zeek_init()
 	{
 	Log::create_stream(LOG, [$columns=Info, $path="test", $max_delay_interval=1msec]);
-	Log::create_stream(LOG_OTHER, [$columns=Info, $path="test-other"]);
+	Log::create_stream(LOG_OTHER, [$columns=Info, $path="test-other", $max_delay_interval=1msec]);
 	}
 
 event new_packet(c: connection, p: pkt_hdr)
 	{
-	# Undelay any pending packet.
 	local info = Info($ts=network_time(), $msg=fmt("packet number %s", packet_count));
 
-	Log::delay(info, function(rec: Info, id: Log::ID): bool {
-		rec$post_ts = network_time();
-		print network_time(), "post_delay_cb", id, rec;
-		return T;
-	});
 	Log::write(LOG, info);
-
-	# This delay_callback runs only for the write to LOG_OTHER.
-	Log::delay(info, function(rec: Info, id: Log::ID): bool {
-		rec$post_ts = network_time();
-		rec$msg += " (other)";
-		print network_time(), "post_delay_cb", id, rec;
-		return T;
-	});
 	Log::write(LOG_OTHER, info);
 	}

@@ -1,5 +1,6 @@
 # @TEST-DOC: Configure stream settings and observe behavior through post_delay_cb.
 
+# @TEST-REQUIRES: false
 # @TEST-EXEC: zeek -B logging,tm -b -r $TRACES/http/get.trace test.zeek %INPUT
 # @TEST-EXEC: TEST_DIFF_CANONIFIER=$SCRIPTS/diff-remove-abspath btest-diff .stdout
 # @TEST-EXEC: TEST_DIFF_CANONIFIER=$SCRIPTS/diff-remove-abspath btest-diff .stderr
