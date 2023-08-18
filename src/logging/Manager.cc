@@ -77,6 +77,7 @@ public:
 	// Is this just veto?
 	bool vetoed = false;
 	bool delaying = false;
+	bool after_hooks = false;
 	};
 
 struct Manager::Filter
@@ -963,13 +964,11 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 	if ( it != delay_block.end() )
 		{
 		const auto& delay_info = it->second;
+		delay_info->after_hooks = true;
 		DBG_LOG(DBG_LOGGING, "Record %p was delayed %d times", columns_arg, delay_info->delay_refs);
 
-		// First time we see a Log::Write() for this record, enqueue
-		// it to the first stream.
-		//
-		// TODO: Restructure as delay_info->HandleWrite() if the
-		// these semantics seem reasonable.
+		// This write was delayed during the execution of hooks,
+		// so we should suspend the write now.
 		if ( ! delay_info->delaying )
 			{
 			stream->Enqueue(delay_info, columns, std::move(active_filters));
@@ -983,10 +982,14 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 			delay_info->StageWrite(stream, columns, std::move(active_filters));
 			}
 
-		// Continued when timer expires or delay finished is called.
+		// All delays resolved during the hooks already, call Done() now.
+		if ( delay_info->delay_refs == 0 )
+			DelayDone(columns);
+
 		return true;
 		}
 
+	// No-delay, just forward to the filters directly.
 	return WriteToFilters(id, stream, active_filters, columns);
 	}
 
@@ -1212,7 +1215,7 @@ void delay_block_housekeeping(DelayBlock& delay_block)
 
 	}
 
-bool Manager::Delay(RecordValPtr columns_arg, FuncPtr post_delay_cb)
+bool Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	{
 	const auto* p = columns_arg.get();
 	const auto& it = delay_block.find(p);
@@ -1246,7 +1249,8 @@ bool Manager::Delay(RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	return true;
 	}
 
-bool Manager::DelayFinish(const RecordValPtr& columns_arg)
+bool Manager::DelayFinish(const EnumValPtr& id, const RecordValPtr& columns_arg,
+                          const ValPtr& token)
 	{
 	const auto* p = columns_arg.get();
 	DBG_LOG(DBG_LOGGING, "DelayFinish() for %p RefCnt=%d", p, p->RefCnt());
@@ -1261,7 +1265,8 @@ bool Manager::DelayFinish(const RecordValPtr& columns_arg)
 	const auto& delay_info = it->second;
 
 	--delay_info->delay_refs;
-	if ( delay_info->delay_refs == 0 )
+
+	if ( delay_info->after_hooks && delay_info->delay_refs == 0 )
 		{
 		DelayDone(delay_info->columns);
 
@@ -1282,7 +1287,7 @@ bool Manager::DelayDone(const RecordValPtr& columns_arg)
 		return false;
 		}
 
-	DBG_LOG(DBG_LOGGING, "DelayDonelog record %p RefCnt=%d", p, p->RefCnt());
+	DBG_LOG(DBG_LOGGING, "DelayDone for log record %p RefCnt=%d", p, p->RefCnt());
 
 	const auto& delay_info = it->second;
 	// TODO: What if the stream vanished? Well, in the best case we never

@@ -173,12 +173,12 @@ public:
 	 * @param post_delay_cb A Zeek callback function to invoke when the
 	 * delay completed or nullptr.
 	 */
-	bool Delay(const RecordValPtr columns, FuncPtr post_delay_cb);
+	bool Delay(const EnumValPtr& id, const RecordValPtr columns, FuncPtr post_delay_cb);
 
 	/**
 	 * TODO: Docs
 	 */
-	bool DelayFinish(const RecordValPtr& columns);
+	bool DelayFinish(const EnumValPtr& id, const RecordValPtr& columns, const ValPtr& token);
 
 	/**
 	 * The given RecordValPtr instance has finished delaying.

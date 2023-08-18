@@ -85,7 +85,7 @@ namespace {
 }
 %%}
 
-function Log::__delay%(rec: any, post_delay_cb: PostDelayCallback%): bool
+function Log::__delay%(id: Log::ID, rec: any, post_delay_cb: PostDelayCallback%): Log::DelayToken
 	%{
 	auto columns = ref(rec);
 	if ( ! columns )
@@ -97,17 +97,17 @@ function Log::__delay%(rec: any, post_delay_cb: PostDelayCallback%): bool
 	if ( post_delay_cb_ptr == empty_post_delay_cb_ptr )
 		post_delay_cb_ptr = Func::nil;
 
-	bool result = zeek::log_mgr->Delay(columns, post_delay_cb_ptr);
+	bool result = zeek::log_mgr->Delay({zeek::NewRef{}, id->AsEnumVal()}, columns, post_delay_cb_ptr);
 	return zeek::val_mgr->Bool(result);
 	%}
 
-function Log::__delay_finish%(rec: any%): bool
+function Log::__delay_finish%(id: Log::ID, rec: any, token: Log::DelayToken%): bool
 	%{
 	auto columns = ref(rec);
 	if ( ! columns )
 		return zeek::val_mgr->Bool(false);
 
-	bool result = zeek::log_mgr->DelayFinish(columns);
+	bool result = zeek::log_mgr->DelayFinish({zeek::NewRef{}, id->AsEnumVal()}, columns, {zeek::NewRef{}, token});
 	return zeek::val_mgr->Bool(result);
 	%}
 

@@ -633,6 +633,13 @@ export {
 	## Returning false discards the record across all filters.
 	type PostDelayCallback: function(rec: any, id: ID): bool;
 
+	## Opaque value returned by Log::delay() and to be used for
+	## calls to Log::delay_finish(). This might be a record, but
+	## should not be inspected by a user.
+	##
+	## Maybe make it an actual opaque ?
+	type DelayToken: any;
+
 	## Noop PostDelayCallback - internally this is just ignored.
 	global empty_post_delay_cb: PostDelayCallback;
 
@@ -652,12 +659,12 @@ export {
 	## post_delay_cb: A function to invoke when either Log::delay_finish
 	##
 	##
-	global delay: function(rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): bool;
+	global delay: function(id: ID, rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): bool;
 
 	## Call this function with a record that was previously delayed.
 	##
 	## TBD: delay_release() so it is more obvious something was held?
-	global delay_finish: function(rec: any): bool;
+	global delay_finish: function(id: ID, rec: any, token: DelayToken): bool;
 
 	## Set the maximum delay for a stream. Multiple calls to this
 	## result in the maximum to be used. The delay of a log stream
@@ -973,14 +980,14 @@ function empty_post_delay_cb(rec: any, id: ID): bool {
 	return T;
 }
 
-function delay(rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): bool
+function delay(id: ID, rec: any, post_delay_cb: PostDelayCallback &default=empty_post_delay_cb): DelayToken
 	{
-	return Log::__delay(rec, post_delay_cb);
+	return Log::__delay(id, rec, post_delay_cb);
 	}
 
-function delay_finish(rec: any): bool
+function delay_finish(id: ID, rec: any, token: DelayToken): bool
 	{
-	return Log::__delay_finish(rec);
+	return Log::__delay_finish(id, rec, token);
 	}
 
 function set_max_delay_interval(id: Log::ID, max_delay: interval): bool
