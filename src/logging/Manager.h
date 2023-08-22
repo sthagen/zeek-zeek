@@ -352,8 +352,7 @@ private:
 	telemetry::IntCounterFamily total_log_stream_writes_family;
 	telemetry::IntCounterFamily total_log_writer_writes_family;
 
-	// TODO: Nested writes?
-	ActiveWrite active_write = {};
+	int64_t delay_idx = 0;
 	};
 
 	} // namespace logging;

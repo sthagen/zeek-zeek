@@ -907,8 +907,6 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 
 	stream->total_writes->Inc();
 
-	active_write = {{zeek::NewRef{}, id}, columns, stream->total_writes->Value()};
-
 	// Raise the log event.
 	if ( stream->event )
 		event_mgr.Enqueue(stream->event, columns);
@@ -954,10 +952,6 @@ bool Manager::Write(EnumVal* id, RecordVal* columns_arg)
 
 		active_filters.push_back(filter);
 		}
-
-	// After running the hooks, reset the active write.
-	int64_t write_index = active_write.idx;
-	active_write = {};
 
 	const auto& it = stream->staged_delays.find(columns.get());
 
@@ -1215,12 +1209,6 @@ void delay_block_housekeeping(DelayBlock& delay_block)
 
 ValPtr Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, FuncPtr post_delay_cb)
 	{
-	if ( active_write.id != id || active_write.rec != columns_arg )
-		{
-		reporter->RuntimeError(nullptr, "Invalid Log::delay() call (write_active=%d)",
-		                       active_write.id != nullptr);
-		}
-
 	Stream* stream = FindStream(id.get());
 	auto& staged_delays = stream->staged_delays;
 	const auto* p = columns_arg.get();
@@ -1230,11 +1218,11 @@ ValPtr Manager::Delay(const EnumValPtr& id, const RecordValPtr columns_arg, Func
 
 	if ( it == staged_delays.end() )
 		{
-		int64_t token = active_write.idx;
+		int64_t token = ++delay_idx;
 		token_val = zeek::val_mgr->Count(token);
 		const auto& iit = staged_delays
-		                      .emplace(p, std::move(std::make_shared<DelayInfo>(
-											  columns_arg, active_write.idx, token_val)))
+		                      .emplace(p, std::move(std::make_shared<DelayInfo>(columns_arg, token,
+		                                                                        token_val)))
 		                      .first;
 		if ( post_delay_cb )
 			iit->second->post_delay_callbacks.emplace_back(post_delay_cb);
