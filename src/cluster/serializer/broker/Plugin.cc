@@ -62,7 +62,7 @@ class BrokerBinV1_Serializer : public Serializer {
         zeek::Args vl;
 
         zeek::EventHandlerPtr handler = zeek::event_registry->Lookup(name);
-        if ( ! handler ) {
+        if ( handler == nullptr ) {
             zeek::reporter->Error("Failed to lookup handler for '%s'", std::string(name).c_str());
             return std::nullopt;
         }

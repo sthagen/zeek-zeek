@@ -1,6 +1,10 @@
 #include "zeek/logging/WriterFrontend.h"
 
+#include "zeek/Desc.h"
+#include "zeek/Func.h"
 #include "zeek/RunState.h"
+#include "zeek/SerializationFormat.h"
+#include "zeek/ZeekString.h"
 #include "zeek/broker/Manager.h"
 #include "zeek/logging/Manager.h"
 #include "zeek/logging/WriterBackend.h"
@@ -168,6 +172,98 @@ void WriterFrontend::Init(int arg_num_fields, const Field* const* arg_fields) {
     }
 }
 
+LogEventBuilder::LogEventBuilder(EnumValPtr stream, EnumValPtr writer, zeek::StringValPtr path)
+    : stream(stream), writer(writer), path(path) {
+    fmt = std::make_unique<zeek::detail::BinarySerializationFormat>();
+    // XXX: The way this allocates memory is pretty naughty.
+    fmt->StartWrite();
+    event = zeek::id::find_val<zeek::FuncVal>("Log::write_batch");
+    if ( ! event )
+        reporter->FatalError("Log::write_batch not found");
+
+    if ( event->AsFunc()->Flavor() != FUNC_FLAVOR_EVENT )
+        reporter->FatalError("Log::write_batch not an event");
+
+    // XXX: This should probably be Log::log_topic or so.
+    log_topic_func = zeek::id::find_func("Broker::log_topic");
+
+    // XXX: Fix this, have a separate enum type/value?
+    auto format_id = id::find("Log::WRITER_NONE");
+    if ( ! format_id || ! format_id->IsEnumConst() )
+        reporter->FatalError("format not found");
+
+    const auto& et = format_id->GetType<zeek::EnumType>();
+    format = et->GetEnumVal(et->Lookup(format_id->Name()));
+    if ( ! format )
+        reporter->FatalError("format has no val type=%s", zeek::obj_desc(format_id->GetType().get()).c_str());
+}
+
+namespace {
+
+std::pair<int, char*> threading_vals_to_str(int num_fields, Value** vals) {
+    zeek::detail::BinarySerializationFormat record_fmt;
+    char* data;
+    int len;
+    record_fmt.StartWrite();
+
+    bool success = record_fmt.Write(num_fields, "num_fields");
+    if ( ! success ) {
+        reporter->Error("Failed to remotely log stream: num_fields serialization failed");
+        return {-1, nullptr};
+    }
+
+    for ( int i = 0; i < num_fields; ++i ) {
+        if ( ! vals[i]->Write(&record_fmt) ) {
+            reporter->Error("Failed to remotely log stream: field %d serialization failed", i);
+            return {-1, nullptr};
+        }
+    }
+
+    len = record_fmt.EndWrite(&data);
+    return {len, data};
+}
+
+} // namespace
+
+void LogEventBuilder::Write(int num_fields, Value** vals) {
+    auto [len, data] = threading_vals_to_str(num_fields, vals);
+    if ( len < 0 )
+        return;
+
+    fmt->Write(data, len, "log record");
+    // XXX: can we do better? This is a 64KB chunk of memory! Hopefully
+    // jemalloc/glibc don't go to the OS everytime.
+    free(data);
+    ++writes;
+}
+
+void LogEventBuilder::Flush() {
+    if ( writes == 0 )
+        return;
+
+    char* data;
+    int len = fmt->EndWrite(&data);
+    auto s = std::make_unique<zeek::String>(false, reinterpret_cast<byte_vec>(data), len);
+    s->SetUseFreeToDelete(true);
+
+    auto sv = zeek::make_intrusive<zeek::StringVal>(s.release());
+    zeek::Args args{stream, writer, path, format, zeek::val_mgr->Count(writes), sv};
+    auto ev = zeek::cluster::detail::Event(event, args);
+
+    auto topic_r = log_topic_func->Invoke(stream, path);
+    if ( ! topic_r )
+        reporter->FatalError("log_topic_func %s did not return a result", log_topic_func->Name());
+
+    auto topic = topic_r->AsStringVal()->ToStdString();
+    std::fprintf(stderr, "publishing %d records for %s to %s\n", writes, path->CheckString(), topic.c_str());
+    zeek::cluster::backend->PublishEvent(topic, ev);
+
+    // Reset logging state.
+    fmt->StartWrite();
+    writes = 0;
+}
+
+
 void WriterFrontend::Write(int arg_num_fields, Value** vals) {
     if ( disabled ) {
         DeleteVals(arg_num_fields, vals);
@@ -182,8 +278,16 @@ void WriterFrontend::Write(int arg_num_fields, Value** vals) {
     }
 
     if ( remote ) {
-        broker_mgr->PublishLogWrite(stream, writer, info->path, num_fields, vals);
+        if ( ! builder )
+            builder = std::make_unique<LogEventBuilder>(zeek::IntrusivePtr{zeek::NewRef{}, stream},
+                                                        zeek::IntrusivePtr{zeek::NewRef{}, writer},
+                                                        zeek::make_intrusive<zeek::StringVal>(info->path));
+
+        builder->Write(arg_num_fields, vals);
+        builder->Flush();
+        // broker_mgr->PublishLogWrite(stream, writer, info->path, num_fields, vals);
     }
+
 
     if ( ! backend ) {
         DeleteVals(arg_num_fields, vals);
@@ -204,6 +308,7 @@ void WriterFrontend::Write(int arg_num_fields, Value** vals) {
 }
 
 void WriterFrontend::FlushWriteBuffer() {
+    std::fprintf(stderr, "FlushWriteBuffer!\n");
     if ( ! write_buffer_pos )
         // Nothing to do.
         return;

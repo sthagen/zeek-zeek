@@ -832,8 +832,9 @@ SetupResult setup(int argc, char** argv, Options* zopts) {
         const auto& cluster_backend_val = id::find_val<zeek::EnumVal>("Cluster::backend");
         const auto& cluster_backend_type = zeek::id::find_type<EnumType>("Cluster::ClusterBackendTag");
         zeek_int_t broker_enum = cluster_backend_type->Lookup("Cluster::CLUSTER_BACKEND_BROKER");
-        if ( broker_enum == cluster_backend_val->AsEnum() )
+        if ( broker_enum == cluster_backend_val->AsEnum() ) {
             cluster::backend = broker_mgr;
+        }
         else {
             const auto& cluster_serializer_val = id::find_val<zeek::EnumVal>("Cluster::serializer");
             auto* serializer = cluster::manager->InstantiateSerializer(cluster_serializer_val);

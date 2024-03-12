@@ -2,9 +2,53 @@
 
 #pragma once
 
+#include <memory>
+
 #include "zeek/logging/WriterBackend.h"
 
-namespace zeek::logging {
+
+namespace zeek {
+
+namespace detail {
+class SerializationFormat;
+}
+
+using EnumValPtr = zeek::IntrusivePtr<EnumVal>;
+
+namespace logging {
+
+
+/**
+ * Class for buffering log writes into a custom serialization format
+ * that is transported within an event string val.
+ */
+class LogEventBuilder {
+public:
+    /**
+     * @param stream Enum vlaue of stream
+     * @param writer Enum value of writer
+     * @param max_size Amount of bytes to accumulate before sending a log event.
+     */
+    LogEventBuilder(zeek::EnumValPtr stream, zeek::EnumValPtr writer, zeek::StringValPtr path);
+
+    void Write(int arg_num_fields, threading::Value** vals);
+
+    /**
+     * Construct a log event from the current contents of the
+     * buffer and publish it to one of the logger nodes.
+     */
+    void Flush();
+
+private:
+    zeek::EnumValPtr stream;
+    zeek::EnumValPtr writer;
+    zeek::StringValPtr path;
+    zeek::ValPtr format;
+    zeek::FuncValPtr event;
+    zeek::FuncPtr log_topic_func;
+    zeek_uint_t writes = 0;
+    std::unique_ptr<zeek::detail::SerializationFormat> fmt;
+};
 
 class Manager;
 
@@ -39,6 +83,8 @@ public:
      * Frontends must only be instantiated by the main thread.
      */
     WriterFrontend(const WriterBackend::WriterInfo& info, EnumVal* stream, EnumVal* writer, bool local, bool remote);
+
+    WriterFrontend() = delete;
 
     /**
      * Destructor.
@@ -206,6 +252,10 @@ protected:
     static const int WRITER_BUFFER_SIZE = 1000;
     int write_buffer_pos;             // Position of next write in buffer.
     threading::Value*** write_buffer; // Buffer of size WRITER_BUFFER_SIZE.
+
+    // Remote write buffer.
+    std::unique_ptr<logging::LogEventBuilder> builder;
 };
 
-} // namespace zeek::logging
+} // namespace logging
+} // namespace zeek

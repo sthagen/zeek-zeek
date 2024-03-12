@@ -743,6 +743,16 @@ global stream_filters: table[ID] of set[string] = table();
 # We keep a script-level copy of all filters so that we can manipulate them.
 global filters: table[ID, string] of Filter;
 
+## Internal event for transporting serialized log writes.
+global Log::write_batch: event(stream: ID, writer: Writer, path: string, format: Writer, n: count, payload: string);
+
+event Log::write_batch(stream: ID, writer: Writer, path: string, format: Writer, n: count, payload: string)
+	{
+	print peer_description, "write_batch", stream, writer, path, format, n, |payload|;
+	}
+
+
+
 @load base/bif/logging.bif # Needs Filter and Stream defined.
 
 module Log;

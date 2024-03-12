@@ -158,7 +158,7 @@ bool BinarySerializationFormat::Read(char* v, const char* tag) {
 }
 
 bool BinarySerializationFormat::Read(char** str, int* len, const char* tag) {
-    int l;
+    uint32_t l;
     if ( ! ReadData(&l, sizeof(l)) )
         return false;
 
@@ -176,7 +176,7 @@ bool BinarySerializationFormat::Read(char** str, int* len, const char* tag) {
     else {
         // If len isn't given, make sure that the string
         // doesn't contain any nulls.
-        for ( int i = 0; i < l; i++ )
+        for ( auto i = 0u; i < l; i++ )
             if ( ! s[i] ) {
                 reporter->Error("binary Format: string contains null; replaced by '_'");
                 s[i] = '_';
