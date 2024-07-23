@@ -8,7 +8,7 @@
 namespace zeek::cluster {
 
 /**
- * This manager only exists to encapsulate registration of components.
+ * This manager only exists to encapsulate registration of cluster backend components.
  */
 class Manager {
 public:
@@ -16,8 +16,10 @@ public:
 
     /**
      * Instantiate a event serializer with the given enum value.
+
+     * @param tag The enum value identifying a serializer.
      *
-     * @return New ClusterBackend instance, or null if there's no such component.
+     * @return New Serializer instance, or null if there's no such component.
      */
     Serializer* InstantiateSerializer(const EnumValPtr& tag);
 
@@ -43,8 +45,8 @@ private:
     plugin::ComponentManager<SerializerComponent> serializers;
 };
 
-// The manager is only here to allow plugins to register components, the backend
-// instance is what actually supports Publish(), Subscribe() and so on.
+// The manager is only here to allow plugins to register components. A ClusterBackend
+// instance is what will actually do Publish(), Subscribe() and so forth.
 extern Manager* manager;
 
 } // namespace zeek::cluster
