@@ -6,6 +6,7 @@
 
 // CivetServer is from the civetweb submodule in prometheus-cpp
 #include <CivetServer.h>
+#include <prometheus/collectable.h>
 #include <prometheus/exposer.h>
 #include <prometheus/registry.h>
 #include <rapidjson/document.h>
@@ -16,8 +17,10 @@
 
 #include "zeek/3rdparty/doctest.h"
 #include "zeek/ID.h"
+#include "zeek/RunState.h"
 #include "zeek/ZeekString.h"
 #include "zeek/broker/Manager.h"
+#include "zeek/iosource/Manager.h"
 #include "zeek/telemetry/ProcessStats.h"
 #include "zeek/telemetry/Timer.h"
 #include "zeek/telemetry/telemetry.bif.h"
@@ -25,11 +28,26 @@
 
 namespace zeek::telemetry {
 
-Manager::Manager() { prometheus_registry = std::make_shared<prometheus::Registry>(); }
+/**
+ * Prometheus Collectable interface used to insert Zeek callback processing
+ * before the Prometheus registry's collection of metric data.
+ */
+class ZeekCollectable : public prometheus::Collectable {
+public:
+    std::vector<prometheus::MetricFamily> Collect() const override {
+        telemetry_mgr->WaitForPrometheusCallbacks();
+        return {};
+    }
+};
 
-// This can't be defined as =default because of the use of unique_ptr with a forward-declared type
-// in Manager.h
-Manager::~Manager() {}
+Manager::Manager() : IOSource(true) { prometheus_registry = std::make_shared<prometheus::Registry>(); }
+
+Manager::~Manager() {
+    // Shut down the exposer first of all so we stop getting requests for
+    // data. This keeps us from getting a request on another thread while
+    // we're shutting down.
+    prometheus_exposer.reset();
+}
 
 void Manager::InitPostScript() {
     // Metrics port setting is used to calculate a URL for prometheus scraping
@@ -84,6 +102,13 @@ void Manager::InitPostScript() {
                                      prometheus_url.c_str());
             }
 
+            // This has to be inserted before the registry below. The exposer
+            // processes the collectors in order of insertion. We want to make
+            // sure that the callbacks get called and the values in the metrics
+            // are updated before prometheus-cpp scrapes them.
+            zeek_collectable = std::make_shared<ZeekCollectable>();
+            prometheus_exposer->RegisterCollectable(zeek_collectable);
+
             prometheus_exposer->RegisterCollectable(prometheus_registry);
         }
     }
@@ -130,6 +155,9 @@ void Manager::InitPostScript() {
                                   return metric;
                               });
 #endif
+
+    collector_flare = std::make_unique<zeek::detail::Flare>();
+    iosource_mgr->RegisterFd(collector_flare->FD(), this);
 }
 
 // -- collect metric stuff -----------------------------------------------------
@@ -543,6 +571,25 @@ HistogramPtr Manager::HistogramInstance(std::string_view prefix, std::string_vie
     auto lbls = Span{labels.begin(), labels.size()};
     auto bounds_span = Span{bounds.begin(), bounds.size()};
     return HistogramInstance(prefix, name, lbls, bounds_span, helptext, unit);
+}
+
+void Manager::ProcessFd(int fd, int flags) {
+    std::unique_lock<std::mutex> lk(collector_cv_mtx);
+
+    collector_flare->Extinguish();
+    prometheus_registry->UpdateViaCallbacks();
+
+    lk.unlock();
+    collector_cv.notify_all();
+}
+
+void Manager::WaitForPrometheusCallbacks() {
+    std::unique_lock<std::mutex> lk(collector_cv_mtx);
+    collector_flare->Fire();
+
+    // It should *not* take 5 seconds to go through all of the callbacks, but
+    // set this to have a timeout anyways just to avoid a deadlock.
+    collector_cv.wait_for(lk, std::chrono::seconds(5));
 }
 
 } // namespace zeek::telemetry
