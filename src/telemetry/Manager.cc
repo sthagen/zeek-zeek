@@ -574,11 +574,16 @@ HistogramPtr Manager::HistogramInstance(std::string_view prefix, std::string_vie
 }
 
 void Manager::ProcessFd(int fd, int flags) {
+    if ( collector_flag )
+        return;
+
     std::unique_lock<std::mutex> lk(collector_cv_mtx);
 
+    collector_flag = true;
     collector_flare->Extinguish();
     prometheus_registry->UpdateViaCallbacks();
 
+    collector_flag = false;
     lk.unlock();
     collector_cv.notify_all();
 }
@@ -589,7 +594,9 @@ void Manager::WaitForPrometheusCallbacks() {
 
     // It should *not* take 5 seconds to go through all of the callbacks, but
     // set this to have a timeout anyways just to avoid a deadlock.
-    collector_cv.wait_for(lk, std::chrono::seconds(5));
+    bool res = collector_cv.wait_for(lk, std::chrono::seconds(5), []() { return ! telemetry_mgr->collector_flag; });
+    if ( ! res )
+        fprintf(stderr, "Timeout waiting for prometheus callbacks\n");
 }
 
 } // namespace zeek::telemetry
