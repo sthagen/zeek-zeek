@@ -53,6 +53,8 @@ public:
      */
     void InitPostScript();
 
+    void Terminate();
+
     /**
      * @return A VectorVal containing all counter and gauge metrics and their values matching prefix and name.
      * @param prefix The prefix pattern to use for filtering. Supports globbing.

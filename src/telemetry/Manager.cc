@@ -42,12 +42,7 @@ public:
 
 Manager::Manager() : IOSource(true) { prometheus_registry = std::make_shared<prometheus::Registry>(); }
 
-Manager::~Manager() {
-    // Shut down the exposer first of all so we stop getting requests for
-    // data. This keeps us from getting a request on another thread while
-    // we're shutting down.
-    prometheus_exposer.reset();
-}
+Manager::~Manager() {}
 
 void Manager::InitPostScript() {
     // Metrics port setting is used to calculate a URL for prometheus scraping
@@ -158,6 +153,16 @@ void Manager::InitPostScript() {
 
     collector_flare = std::make_unique<zeek::detail::Flare>();
     iosource_mgr->RegisterFd(collector_flare->FD(), this);
+}
+
+void Manager::Terminate() {
+    // Shut down the exposer first of all so we stop getting requests for
+    // data. This keeps us from getting a request on another thread while
+    // we're shutting down.
+    prometheus_exposer.reset();
+
+    iosource_mgr->UnregisterFd(collector_flare->FD(), this);
+    collector_flare.reset();
 }
 
 // -- collect metric stuff -----------------------------------------------------
