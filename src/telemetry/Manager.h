@@ -275,7 +275,9 @@ private:
     std::unique_ptr<zeek::detail::Flare> collector_flare;
     std::condition_variable collector_cv;
     std::mutex collector_cv_mtx;
-    bool collector_flag = false;
+    // Only modified under collector_cv_mtx!
+    uint64_t request_idx = 0;
+    uint64_t response_idx = 0;
 };
 
 } // namespace zeek::telemetry

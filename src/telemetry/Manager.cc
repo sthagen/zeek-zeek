@@ -2,6 +2,8 @@
 
 #include "zeek/telemetry/Manager.h"
 
+#include <chrono>
+
 #define RAPIDJSON_HAS_STDSTRING 1
 
 // CivetServer is from the civetweb submodule in prometheus-cpp
@@ -159,11 +161,21 @@ void Manager::InitPostScript() {
 }
 
 void Manager::Terminate() {
+    {
+        // Notify threads that we're shutting down.
+        //
+        // Don't think we really need the lock here?
+        std::unique_lock<std::mutex> lk(collector_cv_mtx);
+        std::fprintf(stderr, "wake em up term=%d\n", zeek::run_state::terminating);
+        collector_cv.notify_all();
+    }
     // Shut down the exposer first of all so we stop getting requests for
     // data. This keeps us from getting a request on another thread while
     // we're shutting down.
+    std::fprintf(stderr, "reset exposer\n");
     prometheus_exposer.reset();
 
+    std::fprintf(stderr, "unregister\n");
     iosource_mgr->UnregisterFd(collector_flare->FD(), this);
     collector_flare.reset();
 }
@@ -582,22 +594,20 @@ HistogramPtr Manager::HistogramInstance(std::string_view prefix, std::string_vie
 }
 
 void Manager::ProcessFd(int fd, int flags) {
-    if ( collector_flag )
-        return;
-
     std::unique_lock<std::mutex> lk(collector_cv_mtx);
-
-    collector_flag = true;
     collector_flare->Extinguish();
-    prometheus_registry->UpdateViaCallbacks();
 
-    collector_flag = false;
+    prometheus_registry->UpdateViaCallbacks();
+    response_idx = request_idx; // Let pending threads know we've completed the update.
+
     lk.unlock();
     collector_cv.notify_all();
 }
 
 void Manager::WaitForPrometheusCallbacks() {
     std::unique_lock<std::mutex> lk(collector_cv_mtx);
+    ++request_idx;
+    uint64_t expected_idx = request_idx;
     collector_flare->Fire();
 
     // It should *not* take 5 seconds to go through all of the callbacks, but
