@@ -23,6 +23,7 @@
 #include "zeek/iosource/Manager.h"
 #include "zeek/telemetry/ProcessStats.h"
 #include "zeek/telemetry/Timer.h"
+#include "zeek/telemetry/consts.bif.h"
 #include "zeek/telemetry/telemetry.bif.h"
 #include "zeek/threading/formatters/detail/json.h"
 
@@ -88,7 +89,9 @@ void Manager::InitPostScript() {
 
         if ( ! getenv("ZEEKCTL_CHECK_CONFIG") ) {
             try {
-                prometheus_exposer = std::make_unique<prometheus::Exposer>(prometheus_url, 2, callbacks);
+                prometheus_exposer =
+                    std::make_unique<prometheus::Exposer>(prometheus_url, BifConst::Telemetry::civetweb_threads,
+                                                          callbacks);
 
                 // CivetWeb stores a copy of the callbacks, so we're safe to delete the pointer here
                 delete callbacks;
@@ -599,7 +602,14 @@ void Manager::WaitForPrometheusCallbacks() {
 
     // It should *not* take 5 seconds to go through all of the callbacks, but
     // set this to have a timeout anyways just to avoid a deadlock.
-    bool res = collector_cv.wait_for(lk, std::chrono::seconds(5), []() { return ! telemetry_mgr->collector_flag; });
+    bool res =
+        collector_cv.wait_for(lk,
+                              std::chrono::microseconds(
+                                  static_cast<long>(BifConst::Telemetry::callback_timeout * 1000000)),
+                              [expected_idx]() {
+                                  bool p = telemetry_mgr->response_idx >= expected_idx || zeek::run_state::terminating;
+                                  return p;
+                              });
     if ( ! res )
         fprintf(stderr, "Timeout waiting for prometheus callbacks\n");
 }
