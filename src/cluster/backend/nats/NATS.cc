@@ -157,16 +157,20 @@ public:
         any_vec_type = zeek::id::find_type<zeek::VectorType>("any_vec");
     }
 
-    zeek::ValPtr MakeEvent(const zeek::Args& args) {
+    zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) {
         auto rec = zeek::make_intrusive<zeek::RecordVal>(nats_event_record_type);
         auto vec = zeek::make_intrusive<zeek::VectorVal>(any_vec_type);
-        vec->Reserve(args.size() - 1);
-        for ( size_t i = 1; i < args.size(); i++ ) {
-            vec->Append(args[i]);
-        }
 
-        rec->Assign(0, args[0]);
-        rec->Assign(1, vec);
+        rec->Assign(0, *first); // Func
+        rec->Assign(1, vec);    // Args
+
+        first = std::next(first);
+
+        auto argc = std::distance(first, last);
+        vec->Reserve(argc);
+
+        std::for_each(first, last, [&vec](const auto& a) { vec->Append(a); });
+
         return rec;
     }
 
@@ -458,7 +462,7 @@ void NATSBackend::InitPostScript() { impl->InitPostScript(); }
 
 void NATSBackend::Terminate() { impl->Terminate(); }
 
-zeek::ValPtr NATSBackend::MakeEvent(const zeek::Args& args) { return impl->MakeEvent(args); }
+zeek::ValPtr NATSBackend::MakeEvent(ArgsIter first, ArgsIter last) { return impl->MakeEvent(first, last); }
 
 bool NATSBackend::PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
     return impl->PublishEvent(topic, event);
