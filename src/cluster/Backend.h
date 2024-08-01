@@ -13,6 +13,8 @@ namespace zeek {
 class FuncVal;
 using FuncValPtr = IntrusivePtr<FuncVal>;
 
+using ArgsIter = zeek::Args::const_iterator;
+
 namespace cluster {
 
 namespace detail {
@@ -38,13 +40,13 @@ public:
         : handler(std::move(handler)), args(std::move(args)), timestamp(timestamp) {}
 
     FuncValOrEventHandler handler;
-
-    // TODO: Make this some && accessor so we can move args out of Event
-    // when enquing it.
     zeek::Args args;
     double timestamp; // This should be more generic, like proper key-value
                       // metadata? Can delay until metadata is made accessible
                       // in script using a generic mechanism.
+                      //
+                      // This is encoded as vector(vector(count, any), ...) on
+                      // the broker side.
 
     std::string_view HandlerName() const;
 
@@ -89,29 +91,27 @@ public:
      */
     bool PublishEvent(const zeek::Args& args);
 
-
-    using ArgsIter = zeek::Args::const_iterator;
-
     /**
      * Create a detail::Event instance given a event handler script function arguments to it.
      */
     detail::Event MakeClusterEvent(FuncValPtr handler, ArgsIter first, ArgsIter last, double timestamp = 0.0) const;
 
     /**
-     * Prepare an event with its argument for publishing.
+     * Prepare a script-level event.
      *
-     * The returned Val can be ClusterBackend specific. It could be an actual record,
-     * and opaque value, etc.
+     * The returned Val can be ClusterBackend specific. It could be a basic
+     * script level record or vector, or an opaque value.
      *
      * XXX: I don't quite get why there is `make_event()` or if it's useful, unless
-     *      maybe for debugging. This seems to introduce extra overhead, unless there's
-     *      some idea of re-using a prepared event in script land.
+     *      maybe for debugging. This seems to introduce extra overhead, unless
+     *      there's some idea of re-using a prepared event in script land, but
+     *      not sure how much that really saves
      *
      * @param args Holds the event as FuncValPtr, followed arguments to be used.
      *
      * @return An opaque ValPtr that can be passed to PublishEvent()
      */
-    virtual zeek::ValPtr MakeEvent(const zeek::Args& args) = 0;
+    virtual zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) = 0;
 
     /**
      * Send an event as produced by MakeEvent() to the given topic.
@@ -123,14 +123,14 @@ public:
     virtual bool PublishEvent(const std::string& topic, const zeek::ValPtr& event) = 0;
 
     /**
-     * Send an event to the given topic.
+     * Send a cluster::detail::Event to the given topic.
      *
-     * This should be the lowest level entry point. The common
-     * Publish(const zeek::Args& args) method send data here.
+     * This should be the lowest level entry point. The Publish(const zeek::Args& args)
+     * method calls this unless given a record.
      *
      * @param topic a topic string associated with the message.
      * @param event the Event to publish to the given topic.
-     * @return true if the message is sent successfully.
+     * @return true if the message has been published successfully.
      */
     virtual bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) = 0;
 
