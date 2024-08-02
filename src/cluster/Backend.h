@@ -102,12 +102,10 @@ public:
      * The returned Val can be ClusterBackend specific. It could be a basic
      * script level record or vector, or an opaque value.
      *
-     * XXX: I don't quite get why there is `make_event()` or if it's useful, unless
-     *      maybe for debugging. This seems to introduce extra overhead, unless
-     *      there's some idea of re-using a prepared event in script land, but
-     *      not sure how much that really saves
+     * This function is invoked from the \a Cluster::make_event() bif.
      *
-     * @param args Holds the event as FuncValPtr, followed arguments to be used.
+     * @param first
+     * @param last
      *
      * @return An opaque ValPtr that can be passed to PublishEvent()
      */
@@ -124,9 +122,6 @@ public:
 
     /**
      * Send a cluster::detail::Event to the given topic.
-     *
-     * This should be the lowest level entry point. The Publish(const zeek::Args& args)
-     * method calls this unless given a record.
      *
      * @param topic a topic string associated with the message.
      * @param event the Event to publish to the given topic.
