@@ -158,18 +158,59 @@ public:
     }
 
     zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) {
+        // Move this into a generic place!
+        ArgsIter it = first;
         auto rec = zeek::make_intrusive<zeek::RecordVal>(nats_event_record_type);
+
+        int argc = std::distance(first, last);
+        if ( argc < 1 ) {
+            reporter->Error("not enough arguments to make_event");
+            return rec;
+        }
+
+        const auto& maybe_func_val = *it;
+        it = std::next(it);
+        --argc;
+
+        if ( maybe_func_val->GetType()->Tag() != TYPE_FUNC ) {
+            reporter->Error("attempt to convert non-event into an event type (%s)",
+                            zeek::obj_desc_short(maybe_func_val->GetType().get()).c_str());
+            return rec;
+        }
+
+        const auto* func = maybe_func_val->AsFunc();
+        const auto func_type = func->GetType();
+        if ( func_type->Flavor() != FUNC_FLAVOR_EVENT ) {
+            reporter->Error("attempt to convert non-event into an event type (%s)", func_type->FlavorString().c_str());
+            return rec;
+        }
+
+
+        const auto& types = func->GetType()->ParamList()->GetTypes();
+        if ( argc != types.size() ) {
+            reporter->Error("bad # of arguments: got %d, expect %d", argc, types.size());
+            return rec;
+        }
+
         auto vec = zeek::make_intrusive<zeek::VectorVal>(any_vec_type);
-
-        rec->Assign(0, *first); // Func
-        rec->Assign(1, vec);    // Args
-
-        first = std::next(first);
-
-        auto argc = std::distance(first, last);
         vec->Reserve(argc);
+        rec->Assign(0, maybe_func_val);
 
-        std::for_each(first, last, [&vec](const auto& a) { vec->Append(a); });
+        for ( int i = 0; it != last; ++it, ++i ) {
+            const auto& a = *it;
+            const auto& got_type = a->GetType();
+            const auto& expected_type = types[i];
+
+            if ( ! same_type(got_type, expected_type) ) {
+                reporter->Error("event parameter #%d type mismatch, got %s, expect %s", i,
+                                obj_desc(got_type.get()).c_str(), obj_desc(expected_type.get()).c_str());
+                return rec;
+            }
+
+            vec->Append(a);
+        }
+
+        rec->Assign(1, vec); // Args
 
         return rec;
     }
