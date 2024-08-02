@@ -18,6 +18,7 @@ using VectorValPtr = IntrusivePtr<VectorVal>;
 using RecordTypePtr = IntrusivePtr<RecordType>;
 
 using Args = std::vector<ValPtr>;
+using ArgsIt = Args::const_iterator;
 
 /**
  * Converts a legacy-style argument list for use in modern Zeek function
