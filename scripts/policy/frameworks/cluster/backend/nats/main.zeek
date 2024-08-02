@@ -1,7 +1,9 @@
 ##! NATS cluster backend support.
 ##!
-##! Cluster::node_down() only works when a node properly
-##! says good bye on the discovery topic.
+##! To actually establish a connection to a NATS cluster, you also want to
+##! load load nats/connect.zeek which installs zeek_init() and zeek_done()
+##! handlers.
+
 module Cluster::Backend::NATS;
 
 export {
@@ -96,12 +98,6 @@ redef Cluster::worker_pool_spec = Cluster::PoolSpec(
 	$node_type = Cluster::WORKER);
 
 
-# Entry point
-event zeek_init()
-	{
-	Cluster::Backend::NATS::connect();
-	}
-
 event Cluster::Backend::NATS::connected()
 	{
 	if ( ! Cluster::subscribe(discovery_topic) )
@@ -116,13 +112,6 @@ event Cluster::Backend::NATS::reconnected()
 	# see a Cluster::node_up() and possibly Cluster::node_down()
 	# if they restarted or so.
 	Cluster::publish(discovery_topic, Cluster::Backend::NATS::hello, Cluster::node, Cluster::node_id());
-	}
-
-event zeek_done() &priority=-100
-	{
-	# Upon shutdown, send out a goodbye so other nodes can properly
-	# raise Cluster::node_down().
-	Cluster::publish(discovery_topic, Cluster::Backend::NATS::goodbye, Cluster::node, Cluster::node_id());
 	}
 
 # Some node announced itself on the discovery topic, reply with
