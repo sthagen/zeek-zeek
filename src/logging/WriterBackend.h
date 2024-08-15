@@ -67,6 +67,11 @@ public:
         const char* path;
 
         /**
+         * The filter identifier this writer is attached to.
+         */
+        std::string filter_name;
+
+        /**
          * The name of the postprocessor function that will be called
          * upon the logging manager processing the "rotation finished"
          * message.  A null or empty value means "use the default function".
@@ -107,6 +112,8 @@ public:
 
             for ( config_map::const_iterator i = other.config.begin(); i != other.config.end(); i++ )
                 config.insert(std::make_pair(util::copy_string(i->first), util::copy_string(i->second)));
+
+            filter_name = other.filter_name;
         }
 
         ~WriterInfo() {
