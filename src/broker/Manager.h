@@ -233,8 +233,25 @@ public:
      * See the Broker::SendFlags record type.
      * @return true if the message is sent successfully.
      */
-    bool PublishLogWrite(EnumVal* stream, EnumVal* writer, std::string path, int num_vals,
-                         const threading::Value* const* vals);
+    [[deprecated("Remove in v8.1. Use LogRecord version")]] bool PublishLogWrite(EnumVal* stream, EnumVal* writer,
+                                                                                 std::string path, int num_vals,
+                                                                                 const threading::Value* const* vals);
+
+    /**
+     * Send a log entry to any interested peers.
+     *
+     * @param stream the stream to which the log entry belongs.
+     * @param writer the writer to use for outputting this log entry.
+     * @param path the log path to output the log entry to.
+     * @param rec the log record.
+     *
+     * TODO: Stabilize API for 8.0. With pluggable cluster backends, we also
+     *       need to have the filter-name here.
+     *
+     * @return true if the message is sent successfully.
+     */
+    bool PublishLogWrite(EnumVal* stream, EnumVal* writer, const std::string& path,
+                         const logging::detail::LogRecord& rec);
 
     /**
      * Automatically send an event to any interested peers whenever it is
