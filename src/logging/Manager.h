@@ -283,9 +283,28 @@ public:
      * @param vals An array of log values to write, of size num_fields.
      * The method takes ownership of the array.
      */
-    bool WriteFromRemote(EnumVal* stream, EnumVal* writer, const std::string& path, int num_fields,
-                         threading::Value** vals);
+    [[deprecated("Remove in v8.1. Use LogRecord version.")]] bool WriteFromRemote(EnumVal* stream, EnumVal* writer,
+                                                                                  const std::string& path,
+                                                                                  int num_fields,
+                                                                                  threading::Value** vals);
 
+    /**
+     * Writes out log entries received from remote nodes.
+     *
+     * This given record has passed through all policy filters and raised events
+     * on the remote node. It's only meant to be written out.
+     *
+     * @param stream The enum value corresponding to the log stream.
+     *
+     * @param writer The enum value corresponding to the desired log writer.
+     *
+     * @param path The path of the target log stream to write to.
+     *
+     * @param rec Representation of the log record to write. The method takes ownership of the array.
+     *
+     * TODO: Stabilize before 8.0 to include filter-name for pluggable cluster backends.
+     */
+    bool WriteFromRemote(EnumVal* id, EnumVal* writer, const std::string& path, detail::LogRecord&& rec);
     /**
      * Announces all instantiated writers to a given Broker peer.
      */
@@ -376,9 +395,9 @@ private:
     bool TraverseRecord(Stream* stream, Filter* filter, RecordType* rt, TableVal* include, TableVal* exclude,
                         const std::string& path, const std::list<int>& indices);
 
-    threading::Value** RecordToFilterVals(const Stream* stream, Filter* filter, RecordVal* columns);
+    detail::LogRecord RecordToLogRecord(const Stream* stream, Filter* filter, RecordVal* columns);
+    threading::Value ValToLogVal(std::optional<ZVal>& val, Type* ty);
 
-    threading::Value* ValToLogVal(std::optional<ZVal>& val, Type* ty);
     Stream* FindStream(EnumVal* id);
     void RemoveDisabledWriters(Stream* stream);
     void InstallRotationTimer(WriterInfo* winfo);

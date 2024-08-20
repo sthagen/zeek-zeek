@@ -181,7 +181,29 @@ bool WriterBackend::Init(int arg_num_fields, const Field* const* arg_fields) {
     return true;
 }
 
-bool WriterBackend::Write(int arg_num_fields, int num_writes, Value*** vals) {
+bool WriterBackend::Write(int arg_num_fields, int num_writes, threading::Value*** vals) {
+    // Slow backwards compat copying threading::Value into
+    // a std::vector<detail::LogRecord>. Not sure this is
+    // even worth it.
+    std::vector<detail::LogRecord> buffer;
+    buffer.reserve(num_writes);
+
+    for ( int j = 0; j < num_writes; j++ ) {
+        detail::LogRecord r;
+        r.reserve(arg_num_fields);
+        for ( int i = 0; i < arg_num_fields; ++i )
+            r.emplace_back(*vals[j][i]);
+
+
+        buffer.emplace_back(std::move(r));
+    }
+
+    DeleteVals(num_writes, vals);
+
+    return Write(arg_num_fields, buffer);
+}
+
+bool WriterBackend::Write(int arg_num_fields, std::vector<detail::LogRecord>& buffer) {
     // Double-check that the arguments match. If we get this from remote,
     // something might be mixed up.
     if ( num_fields != arg_num_fields ) {
@@ -191,22 +213,20 @@ bool WriterBackend::Write(int arg_num_fields, int num_writes, Value*** vals) {
         Debug(DBG_LOGGING, msg);
 #endif
 
-        DeleteVals(num_writes, vals);
         DisableFrontend();
         return false;
     }
 
     // Double-check all the types match.
-    for ( int j = 0; j < num_writes; j++ ) {
+    for ( size_t j = 0; j < buffer.size(); j++ ) {
         for ( int i = 0; i < num_fields; ++i ) {
-            if ( vals[j][i]->type != fields[i]->type ) {
+            if ( buffer[j][i].type != fields[i]->type ) {
 #ifdef DEBUG
                 const char* msg = Fmt("Field #%d type doesn't match in WriterBackend::Write() (%d vs. %d)", i,
-                                      vals[j][i]->type, fields[i]->type);
+                                      buffer[j][i].type, fields[i]->type);
                 Debug(DBG_LOGGING, msg);
 #endif
                 DisableFrontend();
-                DeleteVals(num_writes, vals);
                 return false;
             }
         }
@@ -215,15 +235,22 @@ bool WriterBackend::Write(int arg_num_fields, int num_writes, Value*** vals) {
     bool success = true;
 
     if ( ! Failed() ) {
-        for ( int j = 0; j < num_writes; j++ ) {
-            success = DoWrite(num_fields, fields, vals[j]);
+        // Populate a Value*[] for backwards compat with
+        // the WriterBackend implementations that expect
+        // to receive a threading::Value**.
+        std::vector<Value*> valps(num_fields);
+
+        for ( size_t j = 0; j < buffer.size(); j++ ) {
+            auto& write_vals = buffer[j];
+            for ( int f = 0; f < num_fields; f++ )
+                valps[f] = &write_vals[f];
+
+            success = DoWrite(num_fields, fields, &valps[0]);
 
             if ( ! success )
                 break;
         }
     }
-
-    DeleteVals(num_writes, vals);
 
     if ( ! success )
         DisableFrontend();

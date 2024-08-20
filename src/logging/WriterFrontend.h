@@ -8,6 +8,69 @@ namespace zeek::logging {
 
 class Manager;
 
+
+namespace detail {
+
+/**
+ * Implements a buffer accumulating log records in \a WriterFrontend instance
+ * before passing them to \a WriterBackend instances.
+ *
+ * \see WriterFrontend::Write
+ */
+class WriteBuffer {
+public:
+    /**
+     * Constructor.
+     */
+    explicit WriteBuffer(size_t buffer_size) : buffer_size(buffer_size) {}
+    /**
+     * Push a record to the buffer.
+     *
+     * @param record The records vals.
+     */
+    void PushRecord(LogRecord&& record) { records.emplace_back(std::move(record)); }
+
+    /**
+     * Moves the records out of the buffer and resets it.
+     *
+     * @return The currently buffered log records.
+     */
+    std::vector<LogRecord> TakeRecords() && {
+        // Is this clever? Or not?
+        auto tmp = std::move(records);
+        records.clear();
+
+        records.reserve(buffer_size);
+        return tmp;
+    }
+
+    /**
+     * @return The size of the buffer.
+     */
+    size_t Size() const { return records.size(); }
+
+    /**
+     * @return True if buffer is empty.
+     */
+    size_t Empty() const { return records.empty(); }
+
+    /**
+     * @return True if size equals or exceeds configured buffer size.
+     */
+    bool Full() const { return records.size() >= buffer_size; }
+
+    /**
+     * Clear the records buffer.
+     */
+    void Clear() { records.clear(); }
+
+private:
+    size_t buffer_size;
+    std::vector<LogRecord> records;
+};
+
+} // namespace detail
+
 /**
  * Bridge class between the logging::Manager and backend writer threads. The
  * Manager instantiates one \a WriterFrontend for each open logging filter.
@@ -90,7 +153,30 @@ public:
      *
      * This method must only be called from the main thread.
      */
-    void Write(int num_fields, threading::Value** vals);
+    [[deprecated("Remove in v8.1. Usedetail::LogRecord instead.")]] void Write(int num_fields, threading::Value** vals);
+
+    /**
+     * Write out a record.
+     *
+     * This method generates a message to the backend writer and triggers
+     * the corresponding message there. If the backend method fails, it
+     * sends a message back that will asynchronously call Disable().
+     *
+     * As an optimization, if buffering is enabled (which is the default)
+     * this method may buffer several writes and send them over to the
+     * backend in bulk with a single message. An explicit bulk write of
+     * all currently buffered data can be triggered with
+     * FlushWriteBuffer(). The backend writer triggers this with a
+     * message at every heartbeat.
+     *
+     * if the frontend has remote logging enabled, the record is also
+     * published to interested peers.
+     *
+     * @param rec Representation of the log record. Callee takes ownership.
+
+     * This method must only be called from the main thread.
+     */
+    void Write(detail::LogRecord&& rec);
 
     /**
      * Sets the buffering state.
@@ -204,8 +290,7 @@ protected:
 
     // Buffer for bulk writes.
     static const int WRITER_BUFFER_SIZE = 1000;
-    int write_buffer_pos;             // Position of next write in buffer.
-    threading::Value*** write_buffer; // Buffer of size WRITER_BUFFER_SIZE.
+    detail::WriteBuffer write_buffer; // Buffer of size WRITER_BUFFER_SIZE.
 
 private:
     void CleanupWriteBuffer();

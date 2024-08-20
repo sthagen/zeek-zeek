@@ -13,6 +13,12 @@ class data;
 
 namespace zeek::logging {
 
+namespace detail {
+
+using LogRecord = std::vector<threading::Value>;
+
+}
+
 class WriterFrontend;
 
 /**
@@ -151,7 +157,20 @@ public:
      *
      * @return False if an error occurred.
      */
-    bool Write(int num_fields, int num_writes, threading::Value*** vals);
+    [[deprecated("Remove in v8.1: use std::vector version")]] bool Write(int num_fields, int num_writes,
+                                                                         threading::Value*** vals);
+
+    /**
+     * Write a batch of log records.
+     *
+     * @param num_fields: The number of log fields for this stream. The
+     * value must match what was passed to Init().
+     *
+     * @param buffer Array of LogRecord instances. Non-const for backwards compat.
+     *
+     * @return False if an error occurred.
+     */
+    bool Write(int arg_num_fields, std::vector<detail::LogRecord>& buffer);
 
     /**
      * Sets the buffering status for the writer, assuming the writer

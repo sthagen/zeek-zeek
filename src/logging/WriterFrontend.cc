@@ -50,18 +50,14 @@ private:
 
 class WriteMessage final : public threading::InputMessage<WriterBackend> {
 public:
-    WriteMessage(WriterBackend* backend, int num_fields, int num_writes, Value*** vals)
-        : threading::InputMessage<WriterBackend>("Write", backend),
-          num_fields(num_fields),
-          num_writes(num_writes),
-          vals(vals) {}
+    WriteMessage(WriterBackend* backend, int num_fields, std::vector<detail::LogRecord>&& buffer)
+        : threading::InputMessage<WriterBackend>("Write", backend), num_fields(num_fields), buffer(std::move(buffer)) {}
 
-    bool Process() override { return Object()->Write(num_fields, num_writes, vals); }
+    bool Process() override { return Object()->Write(num_fields, buffer); }
 
 private:
     int num_fields;
-    int num_writes;
-    Value*** vals;
+    std::vector<detail::LogRecord> buffer;
 };
 
 class SetBufMessage final : public threading::InputMessage<WriterBackend> {
@@ -89,7 +85,8 @@ private:
 // Frontend methods.
 
 WriterFrontend::WriterFrontend(const WriterBackend::WriterInfo& arg_info, EnumVal* arg_stream, EnumVal* arg_writer,
-                               bool arg_local, bool arg_remote) {
+                               bool arg_local, bool arg_remote)
+    : write_buffer(detail::WriteBuffer(WRITER_BUFFER_SIZE)) {
     stream = arg_stream;
     writer = arg_writer;
     Ref(stream);
@@ -99,8 +96,6 @@ WriterFrontend::WriterFrontend(const WriterBackend::WriterInfo& arg_info, EnumVa
     buf = true;
     local = arg_local;
     remote = arg_remote;
-    write_buffer = nullptr;
-    write_buffer_pos = 0;
     info = new WriterBackend::WriterInfo(arg_info);
 
     num_fields = 0;
@@ -174,36 +169,39 @@ void WriterFrontend::Init(int arg_num_fields, const Field* const* arg_fields) {
 }
 
 void WriterFrontend::Write(int arg_num_fields, Value** vals) {
-    if ( disabled ) {
-        DeleteVals(arg_num_fields, vals);
-        return;
-    }
+    // Slow implementation copying vals into a vector for
+    // backwards compatibility. Don't use this.
+    std::vector<threading::Value> vvals;
+    vvals.reserve(arg_num_fields);
+    for ( int i = 0; i < arg_num_fields; i++ )
+        vvals.emplace_back(*vals[i]);
 
-    if ( arg_num_fields != num_fields ) {
-        reporter->Warning("WriterFrontend %s expected %d fields in write, got %d. Skipping line.", name, num_fields,
-                          arg_num_fields);
-        DeleteVals(arg_num_fields, vals);
+    DeleteVals(arg_num_fields, vals);
+
+    return Write(std::move(vvals));
+}
+
+void WriterFrontend::Write(detail::LogRecord&& arg_vals) {
+    std::vector<threading::Value> vals = std::move(arg_vals);
+
+    if ( disabled )
+        return;
+
+    if ( vals.size() != static_cast<size_t>(num_fields) ) {
+        reporter->Warning("WriterFrontend %s expected %d fields in write, got %zu. Skipping line.", name, num_fields,
+                          vals.size());
         return;
     }
 
     if ( remote ) {
-        broker_mgr->PublishLogWrite(stream, writer, info->path, num_fields, vals);
+        broker_mgr->PublishLogWrite(stream, writer, info->path, vals);
     }
 
-    if ( ! backend ) {
-        DeleteVals(arg_num_fields, vals);
+    if ( ! backend )
         return;
-    }
 
-    if ( ! write_buffer ) {
-        // Need new buffer.
-        write_buffer = new Value**[WRITER_BUFFER_SIZE];
-        write_buffer_pos = 0;
-    }
-
-    write_buffer[write_buffer_pos++] = vals;
-
-    if ( write_buffer_pos >= WRITER_BUFFER_SIZE || ! buf || run_state::terminating )
+    write_buffer.PushRecord(std::move(vals));
+    if ( write_buffer.Full() || ! buf || run_state::terminating )
         // Buffer full (or no buffering desired or terminating).
         FlushWriteBuffer();
 }
@@ -214,16 +212,12 @@ void WriterFrontend::FlushWriteBuffer() {
         return;
     }
 
-    if ( ! write_buffer_pos )
+    if ( write_buffer.Empty() )
         // Nothing to do.
         return;
 
     if ( backend )
-        backend->SendIn(new WriteMessage(backend, num_fields, write_buffer_pos, write_buffer));
-
-    // Clear buffer (no delete, we pass ownership to child thread.)
-    write_buffer = nullptr;
-    write_buffer_pos = 0;
+        backend->SendIn(new WriteMessage(backend, num_fields, std::move(write_buffer).TakeRecords()));
 }
 
 void WriterFrontend::SetBuf(bool enabled) {
@@ -271,16 +265,6 @@ void WriterFrontend::DeleteVals(int num_fields, Value** vals) {
     delete[] vals;
 }
 
-void WriterFrontend::CleanupWriteBuffer() {
-    if ( ! write_buffer || write_buffer_pos == 0 )
-        return;
-
-    for ( int j = 0; j < write_buffer_pos; j++ )
-        DeleteVals(num_fields, write_buffer[j]);
-
-    delete[] write_buffer;
-    write_buffer = nullptr;
-    write_buffer_pos = 0;
-}
+void WriterFrontend::CleanupWriteBuffer() { write_buffer.Clear(); }
 
 } // namespace zeek::logging
