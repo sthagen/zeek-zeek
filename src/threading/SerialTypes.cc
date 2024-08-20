@@ -82,30 +82,87 @@ std::string Field::TypeName() const {
     return n;
 }
 
-Value::~Value() {
-    if ( ! present )
+// Helper for releasing a Value's content during destruction
+// or the copy constructor.
+static void free_value(Value* valp) {
+    auto& val = *valp;
+    if ( ! val.present )
         return;
 
+    auto type = val.type;
+
     if ( type == TYPE_ENUM || type == TYPE_STRING || type == TYPE_FILE || type == TYPE_FUNC )
-        delete[] val.string_val.data;
+        delete[] val.val.string_val.data;
 
     else if ( type == TYPE_PATTERN )
-        delete[] val.pattern_text_val;
+        delete[] val.val.pattern_text_val;
 
     else if ( type == TYPE_TABLE ) {
-        for ( zeek_int_t i = 0; i < val.set_val.size; i++ )
-            delete val.set_val.vals[i];
+        for ( zeek_int_t i = 0; i < val.val.set_val.size; i++ )
+            delete val.val.set_val.vals[i];
 
-        delete[] val.set_val.vals;
+        delete[] val.val.set_val.vals;
     }
 
     else if ( type == TYPE_VECTOR ) {
-        for ( zeek_int_t i = 0; i < val.vector_val.size; i++ )
-            delete val.vector_val.vals[i];
+        for ( zeek_int_t i = 0; i < val.val.vector_val.size; i++ )
+            delete val.val.vector_val.vals[i];
 
-        delete[] val.vector_val.vals;
+        delete[] val.val.vector_val.vals;
     }
 }
+
+Value::Value(const Value& other) {
+    if ( this == &other )
+        return;
+
+    free_value(this);
+
+    type = other.type;
+    subtype = other.subtype;
+    present = other.present;
+
+    // Deal with "simple types".
+    val = other.val;
+
+    auto otype = other.type;
+
+    if ( otype == TYPE_ENUM || otype == TYPE_STRING || otype == TYPE_FILE || otype == TYPE_FUNC )
+        val.string_val.data = util::copy_string(other.val.string_val.data, other.val.string_val.length);
+
+
+    else if ( otype == TYPE_PATTERN )
+        val.pattern_text_val = util::copy_string(val.pattern_text_val);
+
+    else if ( otype == TYPE_TABLE ) {
+        // Could we reduce this to a single malloc? Does it matter?
+        val.set_val.vals = new Value*[other.val.set_val.size];
+        for ( zeek_int_t i = 0; i < other.val.set_val.size; i++ )
+            val.set_val.vals[i] = new Value(*other.val.set_val.vals[i]);
+    }
+
+    else if ( type == TYPE_VECTOR ) {
+        // Could we reduce this to a single malloc? Does it matter?
+        val.vector_val.vals = new Value*[other.val.vector_val.size];
+        for ( zeek_int_t i = 0; i < other.val.vector_val.size; i++ )
+            val.vector_val.vals[i] = new Value(*other.val.vector_val.vals[i]);
+    }
+}
+
+Value::Value(Value&& other) noexcept {
+    present = other.present;
+    type = other.type;
+    subtype = other.type;
+    line_number = other.line_number;
+
+    val = other.val; // take ownership.
+    other.val.set_val.size = 0;
+    other.val.set_val.vals = 0;
+    other.line_number = -1;
+    other.present = false;
+}
+
+Value::~Value() { free_value(this); }
 
 bool Value::IsCompatibleType(Type* t, bool atomic_only) {
     if ( ! t )
