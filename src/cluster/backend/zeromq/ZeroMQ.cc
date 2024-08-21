@@ -273,11 +273,6 @@ public:
         return true;
     }
 
-    zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) {
-        std::fprintf(stderr, "MakeEvent not implemented\n");
-        return nullptr;
-    }
-
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
         if ( ! serializer->SerializeEventInto(publish_buffer, event) )
             return false;
@@ -303,11 +298,6 @@ public:
         return true;
     }
 
-    bool PublishEvent(const std::string& topic, const zeek::ValPtr& event) {
-        std::fprintf(stderr, "ValPtr publish not implemented\n");
-        return false;
-    }
-
     bool Subscribe(const std::string& topic_prefix) {
         ZEROMQ_DEBUG("Subscribing to %s", topic_prefix.c_str());
         try {
@@ -321,8 +311,10 @@ public:
         return true;
     };
 
-    bool Unsubscribe(const std::string& topic_prefix) { return false; };
-
+    bool Unsubscribe(const std::string& topic_prefix) {
+        std::fprintf(stderr, "Unsubscribe not implemented\n");
+        return false;
+    };
 
     /**
      * This is the same pattern as for NATS.
@@ -412,13 +404,7 @@ void ZeroMQBackend::Terminate() { impl->Terminate(); }
 bool ZeroMQBackend::Connect() { return impl->Connect(); }
 bool ZeroMQBackend::SpawnBrokerThread() { return impl->SpawnBrokerThread(); }
 
-zeek::ValPtr ZeroMQBackend::MakeEvent(ArgsIter first, ArgsIter last) { return impl->MakeEvent(first, last); }
-
 bool ZeroMQBackend::PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
-    return impl->PublishEvent(topic, event);
-}
-
-bool ZeroMQBackend::PublishEvent(const std::string& topic, const zeek::ValPtr& event) {
     return impl->PublishEvent(topic, event);
 }
 
