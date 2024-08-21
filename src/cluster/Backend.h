@@ -12,8 +12,9 @@ namespace zeek {
 
 class FuncVal;
 using FuncValPtr = IntrusivePtr<FuncVal>;
+using RecordValPtr = IntrusivePtr<RecordVal>;
 
-using ArgsIter = zeek::Args::const_iterator;
+using ArgsSpan = Span<const ValPtr>;
 
 namespace cluster {
 
@@ -94,7 +95,7 @@ public:
     /**
      * Create a detail::Event instance given a event handler script function arguments to it.
      */
-    detail::Event MakeClusterEvent(FuncValPtr handler, ArgsIter first, ArgsIter last, double timestamp = 0.0) const;
+    detail::Event MakeClusterEvent(FuncValPtr handler, ArgsSpan args, double timestamp = 0.0) const;
 
     /**
      * Prepare a script-level event.
@@ -104,12 +105,12 @@ public:
      *
      * This function is invoked from the \a Cluster::make_event() bif.
      *
-     * @param first
+     * @param args FuncVal and Arguments.
      * @param last
      *
      * @return An opaque ValPtr that can be passed to PublishEvent()
      */
-    virtual zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) = 0;
+    virtual zeek::RecordValPtr MakeEvent(ArgsSpan args) = 0;
 
     /**
      * Send an event as produced by MakeEvent() to the given topic.
