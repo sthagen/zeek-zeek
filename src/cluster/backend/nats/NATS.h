@@ -25,11 +25,7 @@ public:
 
     bool Connect();
 
-    zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) override;
-
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) override;
-
-    bool PublishEvent(const std::string& topic, const zeek::ValPtr& event) override;
 
     bool Subscribe(const std::string& topic_prefix) override;
 

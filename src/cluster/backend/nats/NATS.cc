@@ -152,67 +152,6 @@ public:
         event_nats_connected = zeek::event_registry->Register("Cluster::Backend::NATS::connected");
         event_nats_disconnected = zeek::event_registry->Register("Cluster::Backend::NATS::disconnected");
         event_nats_reconnected = zeek::event_registry->Register("Cluster::Backend::NATS::reconnected");
-
-        nats_event_record_type = zeek::id::find_type<zeek::RecordType>("Cluster::Backend::NATS::Event");
-        any_vec_type = zeek::id::find_type<zeek::VectorType>("any_vec");
-    }
-
-    zeek::ValPtr MakeEvent(ArgsIter first, ArgsIter last) {
-        // Move this into a generic place!
-        ArgsIter it = first;
-        auto rec = zeek::make_intrusive<zeek::RecordVal>(nats_event_record_type);
-
-        int argc = std::distance(first, last);
-        if ( argc < 1 ) {
-            reporter->Error("not enough arguments to make_event");
-            return rec;
-        }
-
-        const auto& maybe_func_val = *it;
-        it = std::next(it);
-        --argc;
-
-        if ( maybe_func_val->GetType()->Tag() != TYPE_FUNC ) {
-            reporter->Error("attempt to convert non-event into an event type (%s)",
-                            zeek::obj_desc_short(maybe_func_val->GetType().get()).c_str());
-            return rec;
-        }
-
-        const auto* func = maybe_func_val->AsFunc();
-        const auto func_type = func->GetType();
-        if ( func_type->Flavor() != FUNC_FLAVOR_EVENT ) {
-            reporter->Error("attempt to convert non-event into an event type (%s)", func_type->FlavorString().c_str());
-            return rec;
-        }
-
-
-        const auto& types = func->GetType()->ParamList()->GetTypes();
-        if ( argc != types.size() ) {
-            reporter->Error("bad # of arguments: got %d, expect %d", argc, types.size());
-            return rec;
-        }
-
-        auto vec = zeek::make_intrusive<zeek::VectorVal>(any_vec_type);
-        vec->Reserve(argc);
-        rec->Assign(0, maybe_func_val);
-
-        for ( int i = 0; it != last; ++it, ++i ) {
-            const auto& a = *it;
-            const auto& got_type = a->GetType();
-            const auto& expected_type = types[i];
-
-            if ( ! same_type(got_type, expected_type) ) {
-                reporter->Error("event parameter #%d type mismatch, got %s, expect %s", i,
-                                obj_desc(got_type.get()).c_str(), obj_desc(expected_type.get()).c_str());
-                return rec;
-            }
-
-            vec->Append(a);
-        }
-
-        rec->Assign(1, vec); // Args
-
-        return rec;
     }
 
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
@@ -249,26 +188,6 @@ public:
         msg = nullptr;
 
         return true;
-    }
-
-    bool PublishEvent(const std::string& topic, const zeek::ValPtr& event) {
-        if ( event->GetType() != nats_event_record_type ) {
-            zeek::emit_builtin_error(zeek::util::fmt("Wrong event type, expected '%s', got '%s'",
-                                                     obj_desc(event->GetType().get()).c_str(),
-                                                     obj_desc(nats_event_record_type.get()).c_str()));
-            return false;
-        }
-
-        const auto& rec = cast_intrusive<zeek::RecordVal>(event);
-        const auto& func = rec->GetField<zeek::FuncVal>(0);
-        const auto& vargs = rec->GetField<VectorVal>(1);
-        zeek::Args args(vargs->Size());
-        for ( size_t i = 0; i < vargs->Size(); i++ )
-            args[i] = vargs->ValAt(i);
-
-        auto ev = cluster::detail::Event(func, std::move(args));
-
-        return PublishEvent(topic, ev);
     }
 
     bool TrySubscribe(const std::string& topic_prefix, natsSubscription** sub) {
@@ -460,9 +379,6 @@ private:
     EventHandlerPtr event_nats_connected;
     EventHandlerPtr event_nats_disconnected;
     EventHandlerPtr event_nats_reconnected;
-
-    zeek::RecordTypePtr nats_event_record_type;
-    zeek::VectorTypePtr any_vec_type;
 };
 
 namespace {
@@ -503,13 +419,7 @@ void NATSBackend::InitPostScript() { impl->InitPostScript(); }
 
 void NATSBackend::Terminate() { impl->Terminate(); }
 
-zeek::ValPtr NATSBackend::MakeEvent(ArgsIter first, ArgsIter last) { return impl->MakeEvent(first, last); }
-
 bool NATSBackend::PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
-    return impl->PublishEvent(topic, event);
-}
-
-bool NATSBackend::PublishEvent(const std::string& topic, const zeek::ValPtr& event) {
     return impl->PublishEvent(topic, event);
 }
 

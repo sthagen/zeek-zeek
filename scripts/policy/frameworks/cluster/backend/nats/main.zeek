@@ -44,16 +44,6 @@ export {
 
 	## Raised when the connection to the NATS server was re-established.
 	global reconnected: event();
-
-	## Type to support Cluster::make_event(). Seems to work.
-	##
-	## The NATS Backend directly works with ValPtrs while the
-	## Broker backend used some Broker::Data thing, but I don't
-	## see why we need this.
-	type Event: record {
-		ev: any;
-		args: vector of any;
-	};
 }
 
 # Actually use NATS
