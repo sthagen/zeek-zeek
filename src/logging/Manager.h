@@ -32,6 +32,8 @@ class RotationTimer;
 
 namespace detail {
 
+class LogFlushTimer;
+
 class DelayInfo;
 
 using WriteIdx = uint64_t;
@@ -368,6 +370,7 @@ protected:
     friend class RotationFinishedMessage;
     friend class RotationFailedMessage;
     friend class RotationTimer;
+    friend class detail::LogFlushTimer;
 
     // Instantiates a new WriterBackend of the given type (note that
     // doing so creates a new thread!).
@@ -386,6 +389,12 @@ protected:
 
     // Deletes the values as passed into Write().
     void DeleteVals(int num_fields, threading::Value** vals);
+
+    // Flush all enabled streams that have writers.
+    void FlushAll();
+
+    // Start the regular log flushing timer.
+    void StartLogFlushTimer();
 
 private:
     struct Filter;
@@ -427,6 +436,8 @@ private:
 
     zeek_uint_t last_delay_token = 0;
     std::vector<detail::WriteContext> active_writes;
+
+    detail::LogFlushTimer* log_flush_timer = nullptr;
 };
 
 } // namespace logging

@@ -2903,6 +2903,20 @@ export {
 
 } # end export
 
+module Log;
+
+export {
+
+	## Default interval for flushing all writers of all enabled
+	## log streams.
+	##
+	## In earlier Zeek releases this was governed by
+	## :zeek:see:`Threading::heartbeat_interval`.
+	##
+	## .. :zeek:see:`Log::flush`
+	## .. :zeek:see:`Log::set_buf`
+	const flush_interval = 1.0sec &redef;
+}
 
 module Threading;
 
