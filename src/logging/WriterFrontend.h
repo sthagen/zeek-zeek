@@ -297,6 +297,8 @@ protected:
     static const int WRITER_BUFFER_SIZE = 1000;
     detail::WriteBuffer write_buffer; // Buffer of size WRITER_BUFFER_SIZE.
 
+    cluster::detail::LogWriteHeader header;
+
 private:
     void CleanupWriteBuffer();
 };
