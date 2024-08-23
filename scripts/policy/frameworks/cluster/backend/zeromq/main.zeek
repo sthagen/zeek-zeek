@@ -15,6 +15,24 @@
 ##! How other nodes discover each other: We should see subscriptions
 ##! coming in on the XPUB socket and can work with those.
 ##!
+##!
+##!
+##!
+##! How does logging work?
+##!
+##! Workers open a PUSH socket and connect to one or more PULL sockets.
+##!
+##!  node |push| --+  +--> [pull] logger
+##!                 \/
+##!    round robin  X----> [pull] logger
+##!                 /\
+##!  node |push| --+  +--> [pull] logger
+##!
+##! Workers either connect to all loggers (because they know them),
+##! but workers may also connect to a single proxy in the middle that
+##! forwards the log writes to logger nodes . In that case, workers do
+##! not need to know the loggers and/or the middleman might not even
+##! be Zeek.
 module Cluster::Backend::ZeroMQ;
 
 export {
@@ -31,6 +49,28 @@ export {
 	const connect_xpub_endpoint = "tcp://127.0.0.1:5556" &redef;
 	const connect_xsub_endpoint = "tcp://127.0.0.1:5555" &redef;
 
+	# Logging
+
+	## Vector of endpoints to connect to for logging. A local
+	## PUSH socket is opened and connected to each of them.
+	const connect_log_endpoints: vector of string &redef;
+
+	## High water mark value for logging PUSH sockets. If reached,
+	## Zeek workers will block or drop messages.
+	##
+	## TODO: Make action configurable (block vs drop)
+	const log_sndhwm: int = 1000 &redef;
+	const log_rcvhwm: int = 1000 &redef;
+
+	## Kernel send and receive buffer sizes. Use -1 as the default.
+	const log_sndbuf: int = -1 &redef;
+	const log_rcvbuf: int = -1 &redef;
+
+	## Endpoint to listen on for log messages. If empty,
+	## don't listen.
+	const listen_log_endpoint = "" &redef;
+
+	# Whether to run the zmq_proxy() thread on this node.
 	const run_broker_thread: bool = F &redef;
 
 	global node_topic_prefix = "zeek.cluster.node" &redef;

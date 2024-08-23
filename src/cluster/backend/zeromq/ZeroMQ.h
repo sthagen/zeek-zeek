@@ -42,6 +42,8 @@ public:
 
     bool Unsubscribe(const std::string& topic_prefix) override;
 
+    bool PublishLogWrites(const cluster::detail::LogWriteHeader& header, cluster::detail::LogRecords records) override;
+
     static Backend* Instantiate(Serializer* serializer) { return new ZeroMQBackend(serializer); }
 
 private:
