@@ -27,6 +27,14 @@ struct Field {
     TypeTag subtype; //! Inner type for sets and vectors.
     bool optional;   //! True if field is optional.
 
+
+    /**
+     * Constructor.
+     *
+     * Uninitialized - for read usage.
+     */
+    Field() = default;
+
     /**
      * Constructor.
      */
@@ -108,10 +116,6 @@ struct Field {
      * thread-safe.
      */
     std::string TypeName() const;
-
-private:
-    // Force usage of constructor above.
-    Field() {}
 };
 
 /**
