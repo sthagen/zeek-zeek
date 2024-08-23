@@ -253,6 +253,12 @@ public:
         return true;
     }
 
+    bool PublishLogWrite(const cluster::detail::LogWriteHeader& header, const cluster::detail::LogRecords) {
+        // Use a NATS queue group for load-balancing?
+        NATS_DEBUG("PublishLogWrite not implemented");
+        return false;
+    }
+
     void Terminate() {
         for ( auto& sub : subscriptions ) {
             if ( sub.sub )
@@ -426,6 +432,10 @@ bool NATSBackend::PublishEvent(const std::string& topic, const cluster::detail::
 bool NATSBackend::Subscribe(const std::string& topic_prefix) { return impl->Subscribe(topic_prefix); }
 
 bool NATSBackend::Unsubscribe(const std::string& topic_prefix) { return impl->Unsubscribe(topic_prefix); }
+
+bool NATSBackend::PublishLogWrites(const cluster::detail::LogWriteHeader& header, cluster::detail::LogRecords records) {
+    return impl->PublishLogWrite(header, records);
+}
 
 } // namespace cluster::nats
 } // namespace zeek
