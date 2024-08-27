@@ -24,6 +24,7 @@
 #include "zeek/iosource/IOSource.h"
 #include "zeek/iosource/Manager.h"
 #include "zeek/logging/Manager.h"
+#include "zeek/util.h"
 
 namespace zeek {
 
@@ -57,14 +58,16 @@ struct BrokerThreadArgs {
 void broker_thread_fun(void* arg) {
     // Running in thread - lets hope it goes fine.
     auto args = static_cast<BrokerThreadArgs*>(arg);
-    std::fprintf(stderr, "running proxy\n");
+    std::fprintf(stderr, "[zeromq] running broker thread\n");
+
+    util::detail::set_thread_name("zmq-broker");
     try {
         zmq::proxy(args->xsub, args->xpub, zmq::socket_ref{});
     } catch ( zmq::error_t& err ) {
         if ( err.num() != ETERM )
             throw;
     }
-    std::fprintf(stderr, "proxy done\n");
+    std::fprintf(stderr, "[zeromq] broker thread done\n");
 }
 
 void self_thread_fun(void* arg);
