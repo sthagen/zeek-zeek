@@ -253,7 +253,8 @@ public:
         return true;
     }
 
-    bool PublishLogWrite(const cluster::detail::LogWriteHeader& header, const cluster::detail::LogRecords) {
+    bool PublishLogWrite(const logging::detail::LogWriteHeader& header,
+                         zeek::Span<logging::detail::LogRecord> records) {
         // Use a NATS queue group for load-balancing?
         NATS_DEBUG("PublishLogWrite not implemented");
         return false;
@@ -433,7 +434,8 @@ bool NATSBackend::Subscribe(const std::string& topic_prefix) { return impl->Subs
 
 bool NATSBackend::Unsubscribe(const std::string& topic_prefix) { return impl->Unsubscribe(topic_prefix); }
 
-bool NATSBackend::PublishLogWrites(const cluster::detail::LogWriteHeader& header, cluster::detail::LogRecords records) {
+bool NATSBackend::PublishLogWrites(const logging::detail::LogWriteHeader& header,
+                                   zeek::Span<logging::detail::LogRecord> records) {
     return impl->PublishLogWrite(header, records);
 }
 
