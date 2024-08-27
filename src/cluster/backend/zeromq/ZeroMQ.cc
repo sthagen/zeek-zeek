@@ -483,7 +483,8 @@ public:
         return false;
     };
 
-    bool PublishLogWrite(const cluster::detail::LogWriteHeader& header, cluster::detail::LogRecords records) {
+    bool PublishLogWrite(const logging::detail::LogWriteHeader& header,
+                         zeek::Span<logging::detail::LogRecord> records) {
         // Serialize the record. This isn't doing any buffering yet.
         //
         // Not clear where the buffering should happen... maybe in
@@ -651,8 +652,8 @@ bool ZeroMQBackend::Subscribe(const std::string& topic_prefix) { return impl->Su
 
 bool ZeroMQBackend::Unsubscribe(const std::string& topic_prefix) { return impl->Unsubscribe(topic_prefix); }
 
-bool ZeroMQBackend::PublishLogWrites(const cluster::detail::LogWriteHeader& header,
-                                     cluster::detail::LogRecords records) {
+bool ZeroMQBackend::PublishLogWrites(const logging::detail::LogWriteHeader& header,
+                                     zeek::Span<logging::detail::LogRecord> records) {
     return impl->PublishLogWrite(header, records);
 }
 
