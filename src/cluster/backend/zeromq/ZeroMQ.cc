@@ -432,6 +432,7 @@ public:
     }
 
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
+        publish_buffer.clear();
         if ( ! serializer->SerializeEventInto(publish_buffer, event) )
             return false;
 
