@@ -69,6 +69,20 @@ private:
     std::vector<LogRecord> records;
 };
 
+
+/**
+ * A struct holding all ncessary information that relates to
+ * log writes for a given path. These values are constant over
+ * the lifetime of a \a WriterFrontend.
+ */
+struct LogWriteHeader {
+    EnumValPtr stream_id;                 // The enum identifying the stream.
+    EnumValPtr writer_id;                 // The enum identifying the writer for backwards compat.
+    std::string filter_name;              // The name of the filter.
+    std::string path;                     // The path as configured or produced by the filter's path_func.
+    std::vector<threading::Field> fields; // The schema describing a log record.
+};
+
 } // namespace detail
 
 /**
@@ -297,7 +311,7 @@ protected:
     static const int WRITER_BUFFER_SIZE = 1000;
     detail::WriteBuffer write_buffer; // Buffer of size WRITER_BUFFER_SIZE.
 
-    cluster::detail::LogWriteHeader header;
+    detail::LogWriteHeader header;
 
 private:
     void CleanupWriteBuffer();

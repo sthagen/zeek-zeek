@@ -33,6 +33,8 @@ class RotationTimer;
 
 namespace detail {
 
+struct LogWriteHeader;
+
 class LogFlushTimer;
 
 class DelayInfo;
@@ -310,8 +312,7 @@ public:
     bool WriteFromRemote(EnumVal* id, EnumVal* writer, const std::string& path, detail::LogRecord&& rec);
 
     // Process multiple records from a remote.
-    bool WritesFromRemote(const zeek::cluster::detail::LogWriteHeader& header,
-                          std::vector<detail::LogRecord>&& records);
+    bool WritesFromRemote(const detail::LogWriteHeader& header, std::vector<detail::LogRecord>&& records);
 
 
     /**
