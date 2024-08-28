@@ -275,8 +275,6 @@ void run_loop() {
         }
 #endif
         current_iosrc = nullptr;
-        auto communication_enabled = broker_mgr->Active();
-
         if ( ! ready.empty() ) {
             for ( const auto& src : ready ) {
                 auto* iosrc = src.src;
@@ -289,8 +287,7 @@ void run_loop() {
                     iosrc->Process();
             }
         }
-        else if ( (have_pending_timers || communication_enabled || BifConst::exit_only_after_terminate) &&
-                  ! pseudo_realtime ) {
+        else if ( (have_pending_timers || BifConst::exit_only_after_terminate) && pseudo_realtime == 0.0 ) {
             // Take advantage of the lull to get up to
             // date on timers and events.  Because we only
             // have timers as sources, going to sleep here
@@ -330,7 +327,7 @@ void run_loop() {
 
         // Terminate if we're running pseudo_realtime and
         // the interface has been closed.
-        if ( pseudo_realtime && communication_enabled ) {
+        if ( pseudo_realtime != 0.0 ) {
             iosource::PktSrc* ps = iosource_mgr->GetPktSrc();
             if ( ps && ! ps->IsOpen() )
                 iosource_mgr->Terminate();
