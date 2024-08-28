@@ -26,6 +26,8 @@
 #include "zeek/logging/Manager.h"
 #include "zeek/util.h"
 
+#include "ZeroMQ-Broker.h"
+
 namespace zeek {
 
 namespace plugin {
@@ -49,26 +51,6 @@ namespace detail {
 
 
 namespace {
-
-
-struct BrokerThreadArgs {
-    zmq::socket_t xpub;
-    zmq::socket_t xsub;
-};
-void broker_thread_fun(void* arg) {
-    // Running in thread - lets hope it goes fine.
-    auto args = static_cast<BrokerThreadArgs*>(arg);
-    std::fprintf(stderr, "[zeromq] running broker thread\n");
-
-    util::detail::set_thread_name("zmq-broker");
-    try {
-        zmq::proxy(args->xsub, args->xpub, zmq::socket_ref{});
-    } catch ( zmq::error_t& err ) {
-        if ( err.num() != ETERM )
-            throw;
-    }
-    std::fprintf(stderr, "[zeromq] broker thread done\n");
-}
 
 void self_thread_fun(void* arg);
 } // namespace
@@ -138,19 +120,23 @@ public:
     }
 
     void Terminate() {
-        if ( broker_thread.joinable() ) {
-            ZEROMQ_DEBUG("Shutting down broker_thread_ctx");
-            broker_thread_ctx.shutdown();
-            ZEROMQ_DEBUG("Joining broker_thread");
-            broker_thread.join();
-            ZEROMQ_DEBUG("Joined broker_thread");
-        }
-
         ZEROMQ_DEBUG("Shutting down ctx");
         ctx.shutdown();
         ZEROMQ_DEBUG("Joining self_thread");
         if ( self_thread.joinable() )
             self_thread.join();
+
+        log_push.close();
+        log_pull.close();
+        xsub.close();
+        xpub.close();
+
+        ZEROMQ_DEBUG("Closing ctx");
+        ctx.close();
+
+        // If running the broker thread, terminate it, too.
+        if ( broker_thread )
+            broker_thread->Shutdown();
 
         ZEROMQ_DEBUG("Terminated");
     }
@@ -193,8 +179,6 @@ public:
         log_pull.set(zmq::sockopt::rcvhwm, log_rcvhwm);
         log_pull.set(zmq::sockopt::rcvbuf, log_rcvbuf);
 
-        zmq::message_t msg;
-
         for ( const auto& endp : connect_log_endpoints ) {
             ZEROMQ_DEBUG("Connecting log_push socket with %s", endp.c_str());
             log_push.connect(endp);
@@ -235,7 +219,6 @@ public:
             std::function<void(const std::vector<MultipartMessage>&)> handler;
         };
 
-        // Could also store the handler function.
         std::vector<SocketInfo> sockets = {
             {.socket = xsub,
              .name = "xsub",
@@ -328,12 +311,15 @@ public:
         }
     }
 
+    /**
+     * Enqueue the messages for processing in the main-thread.
+     *
+     * Fire the flare if there weren't any messages enqueued yet.
+     */
     void PushMessages(std::vector<RemoteMessage>&& msgs) {
         std::scoped_lock sl(messages_mtx);
 
         bool fire_flare = messages.empty() && ! msgs.empty();
-
-        // std::fprintf(stderr, "Pushing %zu messages fire=%d\n", msgs.size(), fire_flare);
 
         for ( auto&& m : msgs )
             messages.emplace_back(std::move(m));
@@ -411,27 +397,8 @@ public:
     }
 
     bool SpawnBrokerThread() {
-        ZEROMQ_DEBUG("Spawning thread listening on xsub=%s xpub=%s", listen_xsub_endpoint.c_str(),
-                     listen_xpub_endpoint.c_str());
-
-        try {
-            zmq::socket_t bxsub(broker_thread_ctx, zmq::socket_type::xsub);
-            zmq::socket_t bxpub(broker_thread_ctx, zmq::socket_type::xpub);
-
-            bxsub.bind(listen_xsub_endpoint);
-            bxpub.bind(listen_xpub_endpoint);
-
-            broker_thread_args = {std::move(bxsub), std::move(bxpub)};
-
-        } catch ( const zmq::error_t& err ) {
-            broker_thread_args = {};
-            zeek::reporter->Error("Failed to spawn ZeroMQ broker thread: %s", err.what());
-            return false;
-        }
-
-        broker_thread = std::thread(broker_thread_fun, &broker_thread_args);
-
-        return true;
+        broker_thread = std::make_unique<BrokerThread>(listen_xpub_endpoint, listen_xsub_endpoint);
+        return broker_thread->Start();
     }
 
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
@@ -513,7 +480,7 @@ public:
             // XXX: It's not exactly clear what we should do if we reach HWM.
             //      we could block and hope a logger comes along that empties
             //      our internal queue, or discard messages and log very loudly
-            //      and have metrics.
+            //      and have metrics. This may happen regularly at shutdown.
             //
             //      Maybe that should be configurable?
             reporter->Error("Failed to send log write HWM reached?!");
@@ -550,7 +517,8 @@ public:
                 auto r = serializer->UnserializeEvent(payload, payload_size);
 
                 if ( ! r ) {
-                    zeek::reporter->Error("Failed to unserialize message");
+                    auto escaped = util::get_escaped_string(tm->payload, false);
+                    zeek::reporter->Error("Failed to unserialize message: %s: %s", tm->topic.c_str(), escaped.c_str());
                     continue;
                 }
 
@@ -594,39 +562,41 @@ public:
 
 private:
     std::unique_ptr<Serializer> serializer;
+    std::unique_ptr<cluster::detail::LogSerializer> log_serializer;
     cluster::detail::byte_buffer publish_buffer;
 
+    // Script level variables.
     std::string my_node_id;
-
     std::string connect_xsub_endpoint;
     std::string connect_xpub_endpoint;
     std::string listen_xsub_endpoint;
     std::string listen_xpub_endpoint;
-
     std::vector<std::string> connect_log_endpoints;
     std::string listen_log_endpoint;
 
     EventHandlerPtr event_subscription;
     EventHandlerPtr event_unsubscription;
 
-    BrokerThreadArgs broker_thread_args;
-    zmq::context_t broker_thread_ctx;
-    std::thread broker_thread;
-
     zmq::context_t ctx;
     zmq::socket_t xsub;
     zmq::socket_t xpub;
 
+    // Sockets used for logging. The log_push socket connects
+    // with one or more logger-like nodes. Logger nodes listen
+    // on the log_pull socket.
     zmq::socket_t log_push;
     zmq::socket_t log_pull;
 
     std::thread self_thread;
 
+    // Members used for communication with the main thread.
+    // messages and messages_flare are read and modified
+    // under messages_mtx.
     std::mutex messages_mtx;
     std::vector<RemoteMessage> messages;
     zeek::detail::Flare messages_flare;
 
-    std::unique_ptr<cluster::detail::LogSerializer> log_serializer;
+    std::unique_ptr<BrokerThread> broker_thread;
 };
 
 namespace {
