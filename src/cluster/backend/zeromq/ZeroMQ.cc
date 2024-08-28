@@ -113,7 +113,7 @@ public:
         event_unsubscription = zeek::event_registry->Register("Cluster::Backend::ZeroMQ::unsubscription");
         event_subscription = zeek::event_registry->Register("Cluster::Backend::ZeroMQ::subscription");
 
-        zeek::iosource_mgr->Register(this, true /* dont count*/, false /*manage_lifetime*/);
+        zeek::iosource_mgr->Register(this, true /* dont_count */, false /*manage_lifetime*/);
         if ( ! zeek::iosource_mgr->RegisterFd(messages_flare.FD(), this) ) {
             zeek::reporter->Error("Failed to register messages_flare with IO manager");
             return;
@@ -204,6 +204,10 @@ public:
         //
         // https://funcptr.net/2012/09/10/zeromq---edge-triggered-notification/
         self_thread = std::thread(self_thread_fun, this);
+
+
+        // After connecting, register as counting so the IO loop stays alive.
+        zeek::iosource_mgr->Register(this, false /* dont_count */, false /*manage_lifetime*/);
 
         return true;
     }
