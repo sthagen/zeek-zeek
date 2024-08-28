@@ -73,6 +73,7 @@ public:
 
     struct TopicMessage {
         std::string topic;
+        std::string format;
         std::string payload;
     };
 
@@ -160,6 +161,9 @@ public:
         log_push = zmq::socket_t(ctx, zmq::socket_type::push);
         log_pull = zmq::socket_t(ctx, zmq::socket_type::pull);
 
+        auto log_immediate =
+            static_cast<int>(zeek::id::find_val<zeek::BoolVal>("Cluster::Backend::ZeroMQ::log_immediate")->AsBool());
+
         auto log_sndhwm =
             static_cast<int>(zeek::id::find_val<zeek::CountVal>("Cluster::Backend::ZeroMQ::log_sndhwm")->AsInt());
 
@@ -178,6 +182,9 @@ public:
         log_push.set(zmq::sockopt::sndbuf, log_sndbuf);
         log_pull.set(zmq::sockopt::rcvhwm, log_rcvhwm);
         log_pull.set(zmq::sockopt::rcvbuf, log_rcvbuf);
+
+        // Only queue log writes for connected sockets.
+        log_push.set(zmq::sockopt::immediate, log_immediate);
 
         for ( const auto& endp : connect_log_endpoints ) {
             ZEROMQ_DEBUG("Connecting log_push socket with %s", endp.c_str());
@@ -208,11 +215,13 @@ public:
      * Communicates with the main thread through the messages
      * vector and the messages flare.
      *
-     * XXX: Optimize and clean this!
+     * TODO: We could also hook this up with the main IO loop
+     *       rather than running in a background thread, but
+     *       for now this seemed simpler.
+     *
+     *  https://funcptr.net/2012/09/10/zeromq---edge-triggered-notification/
      */
     void Run() {
-        fprintf(stderr, "[zeromq] background thread running!\n");
-
         struct SocketInfo {
             zmq::socket_ref socket;
             std::string name;
@@ -230,24 +239,25 @@ public:
              .name = "log_pull",
              .handler = std::bind(&ZeroMQManagerImpl::HandleLogMessages, this, std::placeholders::_1)},
         };
-        std::vector<zmq::pollitem_t> items(sockets.size());
-        // For each socket, store a list of multipart messages.
 
+        std::vector<zmq::pollitem_t> poll_items(sockets.size());
+
+        // For each socket, store a list of multipart messages.
         std::vector<std::vector<MultipartMessage>> rcv_messages(sockets.size());
 
         while ( true ) {
             for ( size_t i = 0; i < sockets.size(); i++ )
-                items[i] = {.socket = sockets[i].socket.handle(), .fd = 0, .events = ZMQ_POLLIN | ZMQ_POLLERR};
+                poll_items[i] = {.socket = sockets[i].socket.handle(), .fd = 0, .events = ZMQ_POLLIN | ZMQ_POLLERR};
 
             // Awkward.
             std::array<std::vector<std::vector<zmq::message_t>>, 3> rcv_messages = {};
             try {
                 // std::fprintf(stderr, "polling\n");
-                int r = zmq::poll(items, std::chrono::seconds(-1));
+                int r = zmq::poll(poll_items, std::chrono::seconds(-1));
                 // std::fprintf(stderr, "poll done r=%d\n", r);
 
-                for ( size_t i = 0; i < items.size(); i++ ) {
-                    const auto& item = items[i];
+                for ( size_t i = 0; i < poll_items.size(); i++ ) {
+                    const auto& item = poll_items[i];
 
 
                     // std::fprintf(stderr, "items[%lu]=%s %s %s\n", i, sockets[i].name.c_str(),
@@ -261,8 +271,6 @@ public:
                     // Nothing to do?
                     if ( (item.revents & ZMQ_POLLIN) == 0 )
                         continue;
-
-                    zmq::socket_ref ref = sockets[i].socket;
 
                     bool consumed_one = false;
 
@@ -278,7 +286,7 @@ public:
 
                         // Read a multi-part message.
                         do {
-                            auto r = ref.recv(msg, zmq::recv_flags::dontwait);
+                            auto r = sockets[i].socket.recv(msg, zmq::recv_flags::dontwait);
                             if ( r ) {
                                 consumed_one = true;
                                 more = msg.more();
@@ -334,7 +342,7 @@ public:
 
         for ( const auto& msg : msgs ) {
             if ( msg.size() != 4 ) {
-                std::fprintf(stderr, "[zeromq] log: expected 4 parts, have %zu!\n", msg.size());
+                std::fprintf(stderr, "[zeromq] log: error: expected 4 parts, have %zu!\n", msg.size());
                 continue;
             }
             // sender, format, type,  payload
@@ -351,7 +359,7 @@ public:
 
         for ( const auto& msg : msgs ) {
             if ( msg.size() != 1 ) {
-                std::fprintf(stderr, "[zeromq] xpub: expected 1 part, have %zu!\n", msg.size());
+                std::fprintf(stderr, "[zeromq] xpub: error: expected 1 part, have %zu!\n", msg.size());
                 continue;
             }
 
@@ -367,7 +375,7 @@ public:
                 else if ( first == 0 )
                     rm = UnSubscriptionMessage{std::move(topic)};
                 else {
-                    std::fprintf(stderr, "[zeromq] xpub: unexpected first char: have '0x%02x'", first);
+                    std::fprintf(stderr, "[zeromq] xpub: error: unexpected first char: have '0x%02x'", first);
                     continue;
                 }
 
@@ -378,19 +386,37 @@ public:
 
         PushMessages(std::move(rmsgs));
     }
+
+    /**
+     * Handle messages from the local XSUB socket.
+     *
+     * These always start with the topic, followed by 3 parts
+     * describing the sending node, the format and the payload.
+     *
+     * Messages that have been published by this node are filtered
+     * out and are not passed on. That's just how XPUB/XSUB works.
+     */
     void HandleXSubMessages(const std::vector<MultipartMessage>& msgs) {
         std::vector<RemoteMessage> rmsgs;
         rmsgs.reserve(msgs.size());
 
         for ( const auto& msg : msgs ) {
-            if ( msg.size() != 2 ) {
-                std::fprintf(stderr, "[zeromq] xsub: expected 2 parts, have %zu!\n", msg.size());
+            if ( msg.size() != 4 ) {
+                std::fprintf(stderr, "[zeromq] xsub: error: expected 4 parts, have %zu!\n", msg.size());
+                continue;
+            }
+
+            // Filter out any messages that come from us.
+            std::string sender(msg[1].data<const char>(), msg[1].size());
+            if ( sender == my_node_id ) {
+                ZEROMQ_DEBUG("Dropping message from self");
                 continue;
             }
 
             // topic, payload for now.
             rmsgs.emplace_back(TopicMessage{.topic = std::string(msg[0].data<const char>(), msg[0].size()),
-                                            .payload = std::string(msg[1].data<const char>(), msg[1].size())});
+                                            .format = std::string(msg[2].data<const char>(), msg[2].size()),
+                                            .payload = std::string(msg[3].data<const char>(), msg[3].size())});
         }
 
         PushMessages(std::move(rmsgs));
@@ -412,25 +438,39 @@ public:
         // We could instead use a pair or inproc socket to forward the Publish() to the
         // background thread which would then do the actual publishing.
         //
-        // Or could attempt to remove the background thread.
+        // Or could attempt to remove the background thread and integrate with the IO loop.
         //
         // So far, there haven't been crashes though...
-        try {
-            while ( true ) {
-                auto r = xpub.send(zmq::const_buffer(topic.data(), topic.size()), zmq::send_flags::sndmore);
-                if ( r )
-                    break;
-                // handle EEAGAIN, not pretty
-            }
-            while ( true ) {
-                auto r = xpub.send(zmq::const_buffer(publish_buffer.data(), publish_buffer.size()));
-                if ( r )
-                    break;
-                // handle EEAGAIN, not pretty
-            }
-        } catch ( zmq::error_t& err ) {
-            zeek::reporter->Error("Failed to publish to %s: %s", topic.c_str(), err.what());
-            return false;
+
+        // Parts to send for an event publish.
+        std::array<zmq::const_buffer, 4> parts = {
+            zmq::const_buffer(topic.data(), topic.size()),
+            zmq::const_buffer(my_node_id.data(), my_node_id.size()),
+            zmq::const_buffer(serializer->Name().data(), serializer->Name().size()),
+            zmq::const_buffer(publish_buffer.data(), publish_buffer.size()),
+        };
+
+        for ( size_t i = 0; i < parts.size(); i++ ) {
+            zmq::send_flags flags = zmq::send_flags::dontwait;
+            if ( i < parts.size() - 1 )
+                flags = flags | zmq::send_flags::sndmore;
+
+            zmq::send_result_t result;
+            do {
+                try {
+                    result = xpub.send(parts[i], flags);
+                } catch ( zmq::error_t& err ) {
+                    // XXX: Not sure if the return false is so great here.
+                    //
+                    // Also, if we fail to publish, should we block rather
+                    // than discard?
+                    //
+                    // Maybe use ZMQ_XPUB_NODROP
+                    zeek::reporter->Error("Failed to publish to %s: %s (%d)", topic.c_str(), err.what(), err.num());
+                    return false;
+                }
+                // EAGAIN returns empty result, means try again!
+            } while ( ! result );
         }
 
         return true;
@@ -597,7 +637,7 @@ private:
     zeek::detail::Flare messages_flare;
 
     std::unique_ptr<BrokerThread> broker_thread;
-};
+}; // namespace detail
 
 namespace {
 void self_thread_fun(void* arg) {

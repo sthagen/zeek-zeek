@@ -55,6 +55,9 @@ export {
 	## PUSH socket is opened and connected to each of them.
 	const connect_log_endpoints: vector of string &redef;
 
+	## Queue log writes only to completed connections.
+	const log_immediate: bool = T &redef;
+
 	## High water mark value for logging PUSH sockets. If reached,
 	## Zeek workers will block or drop messages.
 	##
@@ -85,12 +88,6 @@ export {
 	global unsubscription: event(topic: string);
 
 	global hello: event(name: string, id: string);
-
-	## Type to support Cluster::make_event(). Seems to work.
-	type Event: record {
-		ev: any;
-		args: vector of any;
-	};
 }
 
 redef Cluster::backend = Cluster::CLUSTER_BACKEND_ZEROMQ;
