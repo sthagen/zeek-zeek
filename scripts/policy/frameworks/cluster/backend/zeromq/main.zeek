@@ -16,11 +16,10 @@
 ##! coming in on the XPUB socket and can work with those.
 ##!
 ##!
-##!
-##!
 ##! How does logging work?
 ##!
-##! Workers open a PUSH socket and connect to one or more PULL sockets.
+##! Workers open a PUSH socket and connect to one or more PULL sockets
+##! which logger nodes listen on.
 ##!
 ##!  node |push| --+  +--> [pull] logger
 ##!                 \/
@@ -30,7 +29,7 @@
 ##!
 ##! Workers either connect to all loggers (because they know them),
 ##! but workers may also connect to a single proxy in the middle that
-##! forwards the log writes to logger nodes . In that case, workers do
+##! forwards the log writes to logger nodes. In that case, workers do
 ##! not need to know the loggers and/or the middleman might not even
 ##! be Zeek.
 module Cluster::Backend::ZeroMQ;
@@ -107,8 +106,6 @@ function zeromq_node_id(): string {
 	return my_node_id;
 }
 
-# NATS uses subjects that are dot separated
-# and not just prefix matching.
 redef Cluster::node_topic = zeromq_node_topic;
 redef Cluster::nodeid_topic = zeromq_nodeid_topic;
 redef Cluster::node_id = zeromq_node_id;
@@ -131,14 +128,17 @@ redef Cluster::worker_pool_spec = Cluster::PoolSpec(
 	$node_type = Cluster::WORKER);
 
 # The ZeroMQ plugin notifies script land when a subscription arrived
-# on the XPUB socket. If such a subscription starts with the node_topic_prefix,
-# then send a ZeroMQ::hello() event to it, announcing our presence.
+# on the XPUB socket. If such a subscription starts with the nodeid_topic_prefix,
+# then send a ZeroMQ::hello() event to it, announcing the presence of this
+# node to the one that created the subscriptions. This goes in both directions,
+# the other node will see the subscription incoming from existing or new nodes
+# and publish ZeroMQ::hello() as well. So every node says hello to all other
+# nodes.
 event Cluster::Backend::ZeroMQ::subscription(topic: string)
 	{
-	if ( starts_with(topic, node_topic_prefix + ".") )
-		{
+	local prefix = nodeid_topic_prefix + ".";
+	if ( starts_with(topic, prefix) )
 		Cluster::publish(topic, Cluster::Backend::ZeroMQ::hello, Cluster::node, Cluster::node_id());
-		}
 	}
 
 # Receiving ZeroMQ::hello() from another node: Raise a Cluster::node_up()
@@ -162,7 +162,23 @@ event Cluster::Backend::ZeroMQ::hello(name: string, id: string)
 	event Cluster::hello(name, id);
 	}
 
+# If the unsubscription is for a nodeid prefix, extract the
+# nodeid that is now gone, find the name of the node from the
+# cluster layout and raise Cluster::node_down().
 event Cluster::Backend::ZeroMQ::unsubscription(topic: string)
 	{
-	print "ZeroMQ::unsubscription", topic;
+	local prefix = nodeid_topic_prefix + ".";
+	if ( ! starts_with(topic, prefix) )
+		return;
+
+	local gone_node_id = topic[|prefix|:];
+	local name = "<unknown>";
+	for ( node_name, n in Cluster::nodes ) {
+		if ( n?$id && n$id == gone_node_id ) {
+			name = node_name;
+			break;
+		}
+	}
+
+	event Cluster::node_down(name, gone_node_id);
 	}

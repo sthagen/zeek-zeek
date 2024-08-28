@@ -370,10 +370,12 @@ public:
                 RemoteMessage rm;
                 auto* start = msg[0].data<const char>() + 1;
                 std::string topic(start, msg[0].size() - 1);
-                if ( first == 1 )
+                if ( first == 1 ) {
                     rm = SubscriptionMessage{std::move(topic)};
-                else if ( first == 0 )
+                }
+                else if ( first == 0 ) {
                     rm = UnSubscriptionMessage{std::move(topic)};
+                }
                 else {
                     std::fprintf(stderr, "[zeromq] xpub: error: unexpected first char: have '0x%02x'", first);
                     continue;
@@ -406,14 +408,11 @@ public:
                 continue;
             }
 
-            // Filter out any messages that come from us.
+            // Filter out any messages that from this node.
             std::string sender(msg[1].data<const char>(), msg[1].size());
-            if ( sender == my_node_id ) {
-                ZEROMQ_DEBUG("Dropping message from self");
+            if ( sender == my_node_id )
                 continue;
-            }
 
-            // topic, payload for now.
             rmsgs.emplace_back(TopicMessage{.topic = std::string(msg[0].data<const char>(), msg[0].size()),
                                             .format = std::string(msg[2].data<const char>(), msg[2].size()),
                                             .payload = std::string(msg[3].data<const char>(), msg[3].size())});
@@ -490,8 +489,16 @@ public:
     };
 
     bool Unsubscribe(const std::string& topic_prefix) {
-        std::fprintf(stderr, "Unsubscribe not implemented\n");
-        return false;
+        ZEROMQ_DEBUG("Unsubscribing %s", topic_prefix.c_str());
+        try {
+            std::string msg = "\x00" + topic_prefix;
+            xsub.send(zmq::const_buffer(msg.data(), msg.size()));
+        } catch ( zmq::error_t& err ) {
+            zeek::reporter->Error("Failed to unsubscribe from topic %s: %s", topic_prefix.c_str(), err.what());
+            return false;
+        }
+
+        return true;
     };
 
     bool PublishLogWrite(const logging::detail::LogWriteHeader& header,
@@ -524,10 +531,9 @@ public:
             //
             //      Maybe that should be configurable?
             reporter->Error("Failed to send log write HWM reached?!");
+            return false;
         }
-        else {
-            ZEROMQ_DEBUG("log write sending done %zu", *result);
-        }
+
         return true;
     }
 
@@ -535,7 +541,6 @@ public:
      * This is the same pattern as for NATS.
      */
     void Process() override {
-        ZEROMQ_DEBUG("Process()");
         std::vector<RemoteMessage> to_process;
         {
             std::scoped_lock lock(messages_mtx);
@@ -544,12 +549,18 @@ public:
             messages.clear();
         }
 
-        ZEROMQ_DEBUG("Got %zu message", to_process.size());
         for ( const auto& msg : to_process ) {
+            // sonarlint wants to use std::visit. not sure...
             if ( auto* sm = std::get_if<SubscriptionMessage>(&msg) ) {
                 ZEROMQ_DEBUG("Enqueueing subscription event for %s ptr=%p name=%s have_handlers=%d", sm->topic.c_str(),
                              event_subscription.Ptr(), event_subscription->Name(), bool(event_subscription));
                 zeek::event_mgr.Enqueue(event_subscription, zeek::make_intrusive<zeek::StringVal>(sm->topic));
+            }
+            else if ( auto* um = std::get_if<UnSubscriptionMessage>(&msg) ) {
+                ZEROMQ_DEBUG("Enqueueing unsubscription event for %s ptr=%p name=%s have_handlers=%d",
+                             um->topic.c_str(), event_unsubscription.Ptr(), event_unsubscription->Name(),
+                             bool(event_unsubscription));
+                zeek::event_mgr.Enqueue(event_unsubscription, zeek::make_intrusive<zeek::StringVal>(um->topic));
             }
             else if ( auto* tm = std::get_if<TopicMessage>(&msg) ) {
                 auto* payload = reinterpret_cast<const std::byte*>(tm->payload.data());
@@ -567,8 +578,7 @@ public:
                                         event.timestamp);
             }
             else if ( auto* lm = std::get_if<LogMessage>(&msg) ) {
-                ZEROMQ_DEBUG("Handling LogMessage!");
-
+                // ZEROMQ_DEBUG("Handling LogMessage!");
                 // We could also dynamically lookup the right de-serializer, but
                 // for now assume we just receive what is configured.
                 if ( lm->format != log_serializer->Name() ) {
@@ -582,7 +592,7 @@ public:
                                                         lm->payload.size());
 
                 if ( ! result ) {
-                    zeek::reporter->Error("Failed to unserialize log message");
+                    zeek::reporter->Error("Failed to unserialize log message using '%s'", lm->format.c_str());
                     continue;
                 }
 
@@ -591,7 +601,8 @@ public:
             }
 
             else {
-                ZEROMQ_DEBUG("Unhandled to process %zu!", msg.index());
+                fprintf(stderr, "[zeromq] ERROR: Process() unimplemented\n");
+                abort(); // boooh
             }
         }
     }
