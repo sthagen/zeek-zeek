@@ -1,8 +1,12 @@
 // See the file "COPYING" in the main distribution directory for copyright.
 
+#include <map>
+#include <regex>
 #include <string>
 
-#include "zeek/script_opt/ZAM/ZBody.h"
+#include "zeek/Reporter.h"
+#include "zeek/Type.h"
+#include "zeek/script_opt/ZAM/ZInst.h"
 #include "zeek/script_opt/ZAM/ZOp.h"
 
 using std::string;
