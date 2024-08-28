@@ -4,46 +4,26 @@ internal-op Remove-Teredo
 op1-read
 class V
 op-types R
-eval	auto teredo = zeek::packet_mgr->GetAnalyzer("Teredo");
-	if ( teredo )
-		{
-		zeek::detail::ConnKey conn_key($1);
-		static_cast<zeek::packet_analysis::teredo::TeredoAnalyzer*>(teredo.get())->RemoveConnection(conn_key);
-		}
+eval	packet_mgr_remove_teredo($1);
 
 internal-op Remove-Teredo
 side-effects OP_REMOVE_TEREDO_V OP_V
 class VV
 op-types I R
-eval	auto teredo = zeek::packet_mgr->GetAnalyzer("Teredo");
-	if ( teredo )
-		{
-		zeek::detail::ConnKey conn_key($1);
-		static_cast<zeek::packet_analysis::teredo::TeredoAnalyzer*>(teredo.get())->RemoveConnection(conn_key);
-		}
+eval	packet_mgr_remove_teredo($1);
 	$$ = 1;
 
 internal-op Remove-GTPv1
 op1-read
 class V
 op-types R
-eval	auto gtpv1 = zeek::packet_mgr->GetAnalyzer("GTPv1");
-	if ( gtpv1 )
-		{
-		zeek::detail::ConnKey conn_key($1);
-		static_cast<zeek::packet_analysis::gtpv1::GTPv1_Analyzer*>(gtpv1.get())->RemoveConnection(conn_key);
-		}
+eval	packet_mgr_remove_gtpv1($1);
 
 internal-op Remove-GTPv1
 side-effects OP_REMOVE_GTPV1_V OP_V
 class VV
 op-types I R
-eval	auto gtpv1 = zeek::packet_mgr->GetAnalyzer("GTPv1");
-	if ( gtpv1 )
-		{
-		zeek::detail::ConnKey conn_key($1);
-		static_cast<zeek::packet_analysis::gtpv1::GTPv1_Analyzer*>(gtpv1.get())->RemoveConnection(conn_key);
-		}
+eval	packet_mgr_remove_gtpv1($1);
 	$$ = 1;
 
 internal-op Set-File-Handle
@@ -113,7 +93,7 @@ macro LogWritePre(id_val, columns_val)
 	auto columns = columns_val;
 
 macro LogWriteResPost(lhs)
-	bool result = log_mgr->Write(id->AsEnumVal(), columns->AsRecordVal());
+	bool result = log_mgr_write(id->AsEnumVal(), columns->AsRecordVal());
 	lhs = result;
 
 internal-op Log-Write
@@ -138,18 +118,18 @@ op1-read
 classes VV CV
 op-types X R
 eval	LogWritePre(LogEnum($1), $2)
-	(void) log_mgr->Write(id->AsEnumVal(), columns->AsRecordVal());
+	(void) log_mgr_write(id->AsEnumVal(), columns->AsRecordVal());
 
 internal-op Broker-Flush-Logs
 side-effects OP_BROKER_FLUSH_LOGS_X OP_X
 class V
 op-types U
-eval	$$ = broker_mgr->FlushLogBuffers();
+eval	$$ = broker_mgr_flush_log_buffers();
 
 internal-op Broker-Flush-Logs
 side-effects
 class X
-eval	(void) broker_mgr->FlushLogBuffers();
+eval	(void) broker_mgr_flush_log_buffers();
 
 internal-op Get-Port-Transport-Proto
 class VV
@@ -167,13 +147,13 @@ eval	auto mask = $1 & PORT_SPACE_MASK;
 predicate-op Conn-Exists
 class V
 op-types R
-eval	session_mgr->FindConnection($1) != nullptr
+eval	session_mgr_find_connection($1) != nullptr
 
 internal-op Lookup-Conn
 class VV
 op-types X R
 eval	auto cid = $1;
-	Connection* conn = session_mgr->FindConnection(cid);
+	Connection* conn = session_mgr_find_connection(cid);
 	ValPtr res;
 	if ( conn )
 		res = conn->GetVal();
@@ -456,9 +436,9 @@ op-types S X
 eval	auto atype = $1.ToVal(Z_TYPE);
 	auto val = atype->AsEnumVal();
 	Unref($$);
-	plugin::Component* component = zeek::analyzer_mgr->Lookup(val);
+	plugin::Component* component = analyzer_mgr_lookup(val);
 	if ( ! component )
-		component = zeek::packet_mgr->Lookup(val);
+		component = packet_mgr_lookup(val);
 	if ( ! component )
 		component = zeek::file_mgr->Lookup(val);
 	if ( component )
@@ -538,7 +518,7 @@ internal-op Is-Protocol-Analyzer
 classes VV VC
 op-types I X
 eval	auto atype = $1.ToVal(Z_TYPE);
-	$$ = analyzer_mgr->Lookup(atype->AsEnumVal()) != nullptr;
+	$$ = analyzer_mgr_lookup(atype->AsEnumVal()) != nullptr;
 
 internal-op Clear-Table
 op1-read
@@ -577,20 +557,11 @@ eval	auto f = $1->CheckString();
 internal-op Get-Bytes-Thresh
 classes VVV VVC
 op-types U R I
-eval	auto a = analyzer::conn_size::GetConnsizeAnalyzer($1);
-	auto res = 0U;
-	if ( a )
-		res = static_cast<analyzer::conn_size::ConnSize_Analyzer*>(a)->GetByteAndPacketThreshold(true, $2);
+eval	auto res = conn_size_get_bytes_threshold($1, $2);
 	$$ = res;
 
 macro SetBytesThresh(cid, threshold, is_orig)
-	bool res = false;
-	auto a = analyzer::conn_size::GetConnsizeAnalyzer(cid);
-	if ( a )
-		{
-		static_cast<analyzer::conn_size::ConnSize_Analyzer*>(a)->SetByteAndPacketThreshold(threshold, true, is_orig);
-		res = true;
-		}
+	bool res = conn_size_set_bytes_threshold(threshold, cid, is_orig);
 
 internal-op Set-Bytes-Thresh
 op1-read

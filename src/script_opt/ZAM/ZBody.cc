@@ -13,7 +13,16 @@
 #include "zeek/Trigger.h"
 #include "zeek/script_opt/ScriptOpt.h"
 #include "zeek/script_opt/ZAM/Compile.h"
-#include "zeek/session/Manager.h"
+#include "zeek/script_opt/ZAM/OpSupport.h"
+
+
+// Forward declarations from RunState.cc
+namespace zeek::run_state {
+extern double network_time;
+extern bool reading_traces;
+extern bool reading_live;
+
+} // namespace zeek::run_state
 
 namespace zeek::detail {
 

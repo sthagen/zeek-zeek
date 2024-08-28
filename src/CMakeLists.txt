@@ -450,6 +450,7 @@ set(MAIN_SRCS
     script_opt/ZAM/Validate.cc
     script_opt/ZAM/Vars.cc
     script_opt/ZAM/ZBody.cc
+    script_opt/ZAM/OpSupport.cc
     script_opt/ZAM/ZInst.cc
     script_opt/ZAM/ZOp.cc
     digest.h)
