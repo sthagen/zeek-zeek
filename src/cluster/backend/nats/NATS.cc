@@ -12,9 +12,12 @@
 #include "zeek/EventHandler.h"
 #include "zeek/EventRegistry.h"
 #include "zeek/Flare.h"
-#include "zeek/Func.h"
+#include "zeek/ID.h"
+#include "zeek/Val.h"
+#include "zeek/cluster/serializer/binary-serialization-format/Serializer.h"
 #include "zeek/iosource/IOSource.h"
 #include "zeek/iosource/Manager.h"
+#include "zeek/logging/Manager.h"
 
 
 namespace zeek {
@@ -52,9 +55,10 @@ void connection_reconnected_cb(natsConnection* nc, void* closure);
 
 class NATSManagerImpl : public zeek::iosource::IOSource {
 public:
-    explicit NATSManagerImpl(Serializer* serializer) : serializer(serializer) {}
-
-    ~NATSManagerImpl() {}
+    explicit NATSManagerImpl(Serializer* serializer) : serializer(serializer) {
+        publish_buffer.resize(4096);
+        log_serializer = std::make_unique<zeek::cluster::detail::BinarySerializationFormatLogSerializer>();
+    }
 
     struct SubscriptionMessage {
         natsSubscription* sub;
@@ -72,6 +76,7 @@ public:
             zeek::reporter->Error("natsConnection_Connect failed: %s", nats_GetLastError(nullptr));
             return false;
         }
+
         // This is the first time we connected with NATS, establish any pending
         // subscriptions now.
         for ( const auto& subscription : subscriptions ) {
@@ -80,6 +85,18 @@ public:
                 // Not sure what to do here, seems almost fatal can there's not
                 // a great way to report it back.
                 zeek::reporter->Error("Pending subscription failed in Connect(): '%s' %s", subscription.subject.c_str(),
+                                      nats_GetLastError(nullptr));
+            }
+        }
+
+        // If configured, wild-card subscribe to the logger_queue_subject_prefix.
+        if ( logger_queue_consume ) {
+            auto subject = logger_queue_subject_prefix + ">";
+            NATS_DEBUG("Subscribing to logger queue '%s' subject='%s'", logger_queue_name.c_str(), subject.c_str());
+            if ( status = natsConnection_QueueSubscribe(&logger_queue_subscription, conn, subject.c_str(),
+                                                        logger_queue_name.c_str(), subscription_handler_cb, this);
+                 status != NATS_OK ) {
+                zeek::reporter->Error("Failed to subscribe to logger queue: '%s' %s", subject.c_str(),
                                       nats_GetLastError(nullptr));
             }
         }
@@ -123,6 +140,12 @@ public:
             return;
         }
 
+        auto name = zeek::id::find_val<zeek::StringVal>("Cluster::node")->ToStdString();
+        if ( status = natsOptions_SetName(options, name.c_str()); status != NATS_OK ) {
+            zeek::reporter->Error("natsOptions_SetName failed: %s", nats_GetLastError(nullptr));
+            return;
+        }
+
         if ( status = natsOptions_SetErrorHandler(options, subscription_error_handler_cb, this); status != NATS_OK ) {
             zeek::reporter->Error("natsOptions_SetErrorHandler failed: %s", nats_GetLastError(nullptr));
             return;
@@ -155,6 +178,13 @@ public:
         event_nats_connected = zeek::event_registry->Register("Cluster::Backend::NATS::connected");
         event_nats_disconnected = zeek::event_registry->Register("Cluster::Backend::NATS::disconnected");
         event_nats_reconnected = zeek::event_registry->Register("Cluster::Backend::NATS::reconnected");
+
+        // Get configuration options for subscribing from the logging queue group.
+        logger_queue_consume = zeek::id::find_val<zeek::BoolVal>("Cluster::Backend::NATS::logger_queue_consume")->Get();
+        logger_queue_name =
+            zeek::id::find_val<zeek::StringVal>("Cluster::Backend::NATS::logger_queue_name")->ToStdString();
+        logger_queue_subject_prefix =
+            zeek::id::find_val<zeek::StringVal>("Cluster::Backend::NATS::logger_queue_subject_prefix")->ToStdString();
     }
 
     bool PublishEvent(const std::string& topic, const cluster::detail::Event& event) {
@@ -164,17 +194,16 @@ public:
             return false;
         }
 
-        // TODO: Re-use this one, no need to re-allocate.
-        cluster::detail::byte_buffer buf;
-        buf.reserve(512);
+        publish_buffer.clear();
 
-        if ( ! serializer->SerializeEventInto(buf, event) )
+        if ( ! serializer->SerializeEventInto(publish_buffer, event) )
             return false;
 
         natsMsg* msg = nullptr;
         const char* reply = nullptr;
         natsStatus status = NATS_OK;
-        if ( status = natsMsg_Create(&msg, topic.c_str(), reply, reinterpret_cast<const char*>(buf.data()), buf.size());
+        if ( status = natsMsg_Create(&msg, topic.c_str(), reply, reinterpret_cast<const char*>(publish_buffer.data()),
+                                     publish_buffer.size());
              status != NATS_OK ) {
             zeek::reporter->Error("Failed to create message: %s", nats_GetLastError(nullptr));
             return false;
@@ -183,7 +212,7 @@ public:
 
         // This is only queued/copied for sending.
         if ( status = natsConnection_PublishMsg(conn, msg); status != NATS_OK ) {
-            zeek::reporter->Error("Failed to natsConnecction_PublishMsg: %s", nats_GetLastError(nullptr));
+            zeek::reporter->Error("Failed to natsConnection_PublishMsg: %s", nats_GetLastError(nullptr));
             natsMsg_Destroy(msg);
             return false;
         }
@@ -258,9 +287,44 @@ public:
 
     bool PublishLogWrite(const logging::detail::LogWriteHeader& header,
                          zeek::Span<logging::detail::LogRecord> records) {
-        // Use a NATS queue group for load-balancing?
-        NATS_DEBUG("PublishLogWrite not implemented");
-        return false;
+        // TODO: Should the string version of stream_id just be part of the LogWriteHeader?
+        auto stream_id_num = header.stream_id->AsEnum();
+        const char* stream_id = header.stream_id->GetType()->AsEnumType()->Lookup(stream_id_num);
+
+        if ( ! stream_id ) {
+            reporter->Error("Failed to remotely log: stream %" PRId64 " doesn't have name", header.stream_id->AsEnum());
+            return false;
+        }
+
+        std::string subject = logger_queue_subject_prefix + stream_id + "." + header.filter_name + "." + header.path;
+
+        cluster::detail::byte_buffer buf;
+        if ( ! log_serializer->SerializeLogWriteInto(buf, header, records) ) {
+            return false;
+        }
+
+        natsMsg* msg = nullptr;
+        const char* reply = nullptr;
+        natsStatus status = NATS_OK;
+        if ( status =
+                 natsMsg_Create(&msg, subject.c_str(), reply, reinterpret_cast<const char*>(buf.data()), buf.size());
+             status != NATS_OK ) {
+            zeek::reporter->Error("Failed to create message: %s", nats_GetLastError(nullptr));
+            return false;
+        }
+
+        NATS_DEBUG("Publishing %zu log records (%zu bytes) to subject %s", records.size(), buf.size(), subject.c_str());
+
+        if ( status = natsConnection_PublishMsg(conn, msg); status != NATS_OK ) {
+            zeek::reporter->Error("Failed natsConnection_PublishMsg in PublishLogWrite(): %s",
+                                  nats_GetLastError(nullptr));
+            natsMsg_Destroy(msg);
+            return false;
+        }
+
+        natsMsg_Destroy(msg);
+        msg = nullptr;
+        return true;
     }
 
     void Terminate() {
@@ -302,6 +366,7 @@ public:
     };
 
     void HandleConnectionCallback(ConnectionEvent ev) {
+        // XXX: Which thread runs this?
         std::string what;
         zeek::EventHandlerPtr script_event;
         switch ( ev ) {
@@ -353,6 +418,20 @@ public:
             const std::byte* payload = reinterpret_cast<const std::byte*>(natsMsg_GetData(sub_msg.msg));
             size_t payload_size = natsMsg_GetDataLength(sub_msg.msg);
 
+            if ( sub_msg.sub == logger_queue_subscription ) {
+                auto r = log_serializer->UnserializeLogWrite(payload, payload_size);
+                natsMsg_Destroy(sub_msg.msg); // This is deep copy, for the better or worse
+                if ( r ) {
+                    zeek::log_mgr->WritesFromRemote(r->header, std::move(r->records));
+                }
+                else
+                    zeek::reporter->Error("Failed to unserialize log record using %s", log_serializer->Name().c_str());
+
+                continue;
+            }
+
+
+            // If it wasn't a log message, it's an event :-)
             auto r = serializer->UnserializeEvent(payload, payload_size);
             natsMsg_Destroy(sub_msg.msg); // This is deep copy, for the better or worse
 
@@ -371,9 +450,17 @@ public:
     const char* Tag() override { return "NATS"; }
 
 private:
+    std::unique_ptr<Serializer> serializer;
+    std::unique_ptr<cluster::detail::LogSerializer> log_serializer;
+    cluster::detail::byte_buffer publish_buffer;
+
+    bool logger_queue_consume = false;
+    std::string logger_queue_name;
+    std::string logger_queue_subject_prefix;
+    natsSubscription* logger_queue_subscription = nullptr;
+
     natsOptions* options = nullptr;
     natsConnection* conn = nullptr;
-    std::unique_ptr<Serializer> serializer;
 
     struct Subscription {
         std::string subject;

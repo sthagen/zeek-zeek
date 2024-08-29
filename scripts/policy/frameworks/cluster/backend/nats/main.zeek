@@ -18,7 +18,6 @@ export {
 	## throughput of latency. Seems ASAP even when false ;-)
 	const send_asap = F &redef;
 
-
 	## Internal event announcing presence of a node.
 	global hello: event(name: string, id: string);
 
@@ -35,6 +34,21 @@ export {
 	global node_topic_prefix = "zeek.cluster.node" &redef;
 	global nodeid_topic_prefix = "zeek.cluster.nodeid" &redef;
 
+	## Whether to subscribe to the logger queue and handle
+	## log messages.
+	global logger_queue_consume = F &redef;
+
+	## Name of the queue group used by loggers.
+	global logger_queue_name = "zeek.logs" &redef;
+
+	## Subject prefix for queue group used by loggers.
+	##
+	## Subscription will be done on this prefix + ">" and
+	## publishes go to {prefix}{stream}.{filter_name}.{path}.
+	## If this needs to be more configurable, maybe a callback
+	## could be introduced, but for now this seems good enough.
+	global logger_queue_subject_prefix = "zeek.logs." &redef;
+
 	## Raised by the NATS backend when the connection to the broker
 	## has been established for the first time.
 	global connected: event();
@@ -48,6 +62,9 @@ export {
 
 # Actually use NATS
 redef Cluster::backend = Cluster::CLUSTER_BACKEND_NATS;
+
+# Logger or manager subscribes to the logging queue.
+redef logger_queue_consume = Cluster::local_node_type() == Cluster::LOGGER || ( Cluster::manager_is_logger && Cluster::local_node_type() == Cluster::MANAGER );
 
 function nats_node_topic(name: string): string {
 	return node_topic_prefix + "." + name;
