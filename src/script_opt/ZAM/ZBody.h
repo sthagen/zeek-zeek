@@ -14,7 +14,6 @@
 // Needed for managing the corresponding values.
 #include "zeek/File.h"
 #include "zeek/Func.h"
-#include "zeek/OpaqueVal.h"
 
 // Just needed for BiFs.
 #include "zeek/analyzer/Manager.h"

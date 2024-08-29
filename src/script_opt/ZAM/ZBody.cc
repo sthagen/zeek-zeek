@@ -5,6 +5,7 @@
 #include "zeek/Desc.h"
 #include "zeek/EventHandler.h"
 #include "zeek/Frame.h"
+#include "zeek/OpaqueVal.h"
 #include "zeek/Overflow.h"
 #include "zeek/RE.h"
 #include "zeek/Reporter.h"
