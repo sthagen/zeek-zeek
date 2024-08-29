@@ -31,7 +31,6 @@ extern "C" {
 #include "zeek/Reporter.h"
 #include "zeek/Scope.h"
 #include "zeek/Timer.h"
-#include "zeek/broker/Manager.h"
 #include "zeek/iosource/Manager.h"
 #include "zeek/iosource/PktDumper.h"
 #include "zeek/iosource/PktSrc.h"
