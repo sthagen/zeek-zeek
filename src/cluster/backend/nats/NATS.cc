@@ -87,6 +87,9 @@ public:
         // Notify script land that the connection has been established.
         zeek::event_mgr.Enqueue(event_nats_connected, zeek::Args{});
 
+        // Register as counting.
+        zeek::iosource_mgr->Register(this, false /* counts*/, false /*manage_lifetime*/);
+
         return true;
     }
 
