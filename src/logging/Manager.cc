@@ -1744,19 +1744,6 @@ WriterFrontend* Manager::CreateWriter(EnumVal* id, EnumVal* writer, WriterBacken
     return winfo->writer;
 }
 
-bool Manager::WriteFromRemote(EnumVal* id, EnumVal* writer, const string& path, int num_fields,
-                              threading::Value** vals) {
-    // Slow version for backwards compat.
-    detail::LogRecord rec;
-    rec.reserve(num_fields);
-    for ( int i = 0; i < num_fields; i++ )
-        rec.emplace_back(*vals[i]);
-
-    DeleteVals(num_fields, vals);
-
-    return WriteFromRemote(id, writer, path, std::move(rec));
-}
-
 bool Manager::WritesFromRemote(const detail::LogWriteHeader& header, std::vector<detail::LogRecord>&& arg_records) {
     auto records = std::move(arg_records);
 
