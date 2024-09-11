@@ -41,7 +41,20 @@ ProfileFunc::ProfileFunc(const Func* func, const StmtPtr& body, bool _abs_rec_fi
         }
     }
 
-    Profile(profiled_func_t.get(), body);
+    TrackType(profiled_func_t);
+    body->Traverse(this);
+
+    // Examine the locals and identify the parameters based on their offsets
+    // (being careful not to be fooled by captures that incidentally have low
+    // offsets). This approach allows us to accommodate function definitions
+    // that use different parameter names than appear in the original
+    // declaration.
+    num_params = profiled_func_t->Params()->NumFields();
+
+    for ( auto l : locals ) {
+        if ( captures.count(l) == 0 && l->Offset() < num_params )
+            params.insert(l);
+    }
 }
 
 ProfileFunc::ProfileFunc(const Stmt* s, bool _abs_rec_fields) {
