@@ -1,3 +1,11 @@
+9.0.0-dev.53 | 2026-04-28 09:11:07 -0700
+
+  * dns: reject malformed names and propagate parse errors (Urval)
+
+    Distinguish between valid termination and parse errors in label
+    handling. Prevents silent acceptance of malformed DNS names and
+    adds regression tests.
+
 9.0.0-dev.51 | 2026-04-28 08:49:18 -0700
 
   * dns: validate LOC rdlength before parsing (Urval)
