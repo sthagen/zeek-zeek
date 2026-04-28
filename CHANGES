@@ -1,3 +1,7 @@
+9.0.0-dev.49 | 2026-04-28 08:41:21 -0700
+
+  * Update cmake submodule [nomail] (Tim Wojtulewicz, Corelight)
+
 9.0.0-dev.47 | 2026-04-28 08:31:33 -0700
 
   * CI: Bump visualstudio2022buildtools to 117.14.29 (Tim Wojtulewicz, Corelight)
