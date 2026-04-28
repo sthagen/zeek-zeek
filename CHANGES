@@ -1,3 +1,10 @@
+9.0.0-dev.51 | 2026-04-28 08:49:18 -0700
+
+  * dns: validate LOC rdlength before parsing (Urval)
+
+    Ensure LOC RDATA is exactly 16 bytes and reject malformed
+    records early, independent of event handling. Adds regression test.
+
 9.0.0-dev.49 | 2026-04-28 08:41:21 -0700
 
   * Update cmake submodule [nomail] (Tim Wojtulewicz, Corelight)
