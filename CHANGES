@@ -1,3 +1,21 @@
+9.0.0-dev.57 | 2026-04-29 09:29:12 +0200
+
+  * Bump external-testing baseline (Arne Welzel, Corelight)
+
+  * zip: Fix filename setting during ZIP::file() (Arne Welzel, Corelight)
+
+    For ZIP::file(), just lookup the file directly from the files manager
+    and set the filename on it. The previous code mistakenly set the
+    filename of the outer ZIP archive because the **f** parameter is the
+    ZIP archive, not the inner file.
+
+  * zip: Pass uncompressed size to zip_file (Arne Welzel, Corelight)
+
+    When creating the File object, pass the uncompressed size instead of the
+    compressed one, otherwise the file closes too early.
+
+    Relates to zeek/spicy-zip#11.
+
 9.0.0-dev.53 | 2026-04-28 09:11:07 -0700
 
   * dns: reject malformed names and propagate parse errors (Urval)
