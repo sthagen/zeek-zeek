@@ -193,7 +193,7 @@ OperationResult SQLite::DoOpen(OpenResultCallback* cb, RecordValPtr options) {
 
     sqlite3_free(errorMsg);
 
-    static std::array<std::pair<std::string, sqlite3*>, 8> statements =
+    std::array<std::pair<std::string, sqlite3*>, 8> statements =
         {// Normal put
          std::make_pair(util::fmt("insert into %s (key_str, value_str, expire_time) values(?, ?, ?) "
                                   "ON CONFLICT(key_str) DO UPDATE SET value_str=?, expire_time=? "
