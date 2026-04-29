@@ -105,3 +105,8 @@ Trace Index/Sources:
 - zip/a.zip.pcap
   ZIP file created with a truncated pdf and truncated putty.exe file such that
   the size stays small. Downloaded from python3 -m http.server 8080 using curl.
+- tcp/syn-bad.pcap
+  Single syn packet with a corrupt TCP checksum, scrambled with hexedit.
+- dns/dns-corrput.pcap
+  A query and response for zeek.org to 8.8.8.8, UDP checksums scrambled
+  with hexedit.

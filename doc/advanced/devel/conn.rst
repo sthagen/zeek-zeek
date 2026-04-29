@@ -4,6 +4,83 @@
 Connection Handling
 ===================
 
+Checksum Behavior
+=================
+
+By default, Zeek will mostly ignore packets that have invalid checksums.
+
+When the IPv4 header checksum is invalid, Zeek produces a ``bad_IP_checksum`` weird and
+discards the packet before proceeding with its connection lookup step.
+
+As of Zeek 8.2, for L4 checksums (TCP, UDP, ICMP, ...), Zeek will only determine
+if the L4 checksum is invalid *after* looking up or creating a connection using
+information from the potentially corrupt L4 header.
+
+This connection lookup is implemented in ``IPBasedAnalyzer::AnalyzePacket()``.
+Checksum validation then happens in the concrete protocol specific analyzers within
+``TCPAnalyzer::DeliverPacket()``, ``UDPAnalyzer::DeliverPacket()``, etc.
+
+Packets with invalid checksums are not counted towards ``orig_pkts`` or ``resp_pkts``
+of a connection and also not passed to a connection's analyzers.
+However, a ``c`` or ``C`` is added to the history field in logarithmic fashion.
+
+This behavior can result in ``conn.log`` entries that show zero ``orig_pkts`` and
+``resp_pkts``, but do show ``c`` or ``C`` sequences in the history.
+
+.. code:: console
+
+    # zeek -D -b -r Traces/tcp/syn-bad.pcap base/protocols/conn LogAscii::use_json=T
+    # jq < conn.log
+    {
+      "ts": 1362692526.869344,
+      "uid": "CJKFoj4bpHEhTeaRoj",
+      "id.orig_h": "141.142.228.5",
+      "id.orig_p": 59856,
+      "id.resp_h": "192.150.187.43",
+      "id.resp_p": 80,
+      "proto": "tcp",
+      "conn_state": "OTH",
+      "local_orig": false,
+      "local_resp": false,
+      "missed_bytes": 0,
+      "history": "C",
+      "orig_pkts": 0,
+      "orig_ip_bytes": 0,
+      "resp_pkts": 0,
+      "resp_ip_bytes": 0,
+      "ip_proto": 6
+    }
+
+    # zeek -b  -r Traces/dns/dns-corrupt.pcap base/protocols/conn LogAscii::use_json=T
+    # jq < conn.log
+    {
+      "ts": 1777450586.006844,
+      "uid": "CJKFoj4bpHEhTeaRoj",
+      "id.orig_h": "192.168.0.109",
+      "id.orig_p": 34357,
+      "id.resp_h": "8.8.8.8",
+      "id.resp_p": 53,
+      "proto": "udp",
+      "conn_state": "OTH",
+      "local_orig": true,
+      "local_resp": false,
+      "missed_bytes": 0,
+      "history": "Cc",
+      "orig_pkts": 0,
+      "orig_ip_bytes": 0,
+      "resp_pkts": 0,
+      "resp_ip_bytes": 0,
+      "ip_proto": 17
+    }
+
+
+The ``history`` fields are ``C`` and ``cC`` for the respective test captures,
+but ``orig_pkts`` and ``resp_pkts`` are zero.
+
+See `issue #5277 <https://github.com/zeek/zeek/issues/5277>`_ on GitHub for some
+discussion around this behavior.
+
+
 Flipping Connections
 ====================
 
