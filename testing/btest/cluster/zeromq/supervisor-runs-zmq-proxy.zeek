@@ -15,13 +15,16 @@
 # @TEST-EXEC: btest-bg-run supervisor "ZEEKPATH=$ZEEKPATH:.. && zeek -j ../supervisor-runs-zmq-proxy.zeek >out"
 # @TEST-EXEC: btest-bg-wait 30
 # @TEST-EXEC: btest-diff supervisor/cluster.log
+# @TEST-EXEC: btest-diff supervisor/worker-1/stderr
 
-redef Log::default_rotation_interval = 0secs;
-redef Log::flush_interval = 0.01sec;
+redef Log::default_rotation_interval = 0 secs;
+redef Log::flush_interval = 0.01 sec;
 
 @load ./zeromq-test-bootstrap
 
 redef Cluster::Backend::ZeroMQ::run_proxy_thread = F;
+redef Cluster::Backend::ZeroMQ::hello_expiration = 1 sec;
+redef table_expire_interval = 1 sec;
 
 # The supervisor peeks into logger/cluster.log to initate a shutdown when
 # all nodes have said hello to each other. See the check-cluster.log.sh
@@ -29,7 +32,7 @@ redef Cluster::Backend::ZeroMQ::run_proxy_thread = F;
 event check_cluster_log() {
 	system_env("../check-cluster-log.sh", table(["SUPERVISOR_PID"] = cat(getpid())));
 
-	schedule 0.1sec { check_cluster_log() };
+	schedule 1 sec { check_cluster_log() };
 }
 
 event zeek_init()
@@ -49,7 +52,13 @@ event zeek_init()
 
 	for ( n, ep in cluster )
 		{
-		local sn = Supervisor::NodeConfig($name=n, $bare_mode=T, $cluster=cluster, $directory=n);
+		local sn = Supervisor::NodeConfig(
+			$name=n,
+			$bare_mode=T,
+			$cluster=cluster,
+			$directory=n,
+			$stdout_file = "stdout",
+			$stderr_file = "stderr");
 		local res = Supervisor::create(sn);
 
 		if ( res != "" )
@@ -80,6 +89,7 @@ zeek-cut node message < logger/cluster.log | sed -r 's/_[^_]+_[0-9]+_/_<hostname
 if [ $(wc -l < cluster.log) = 20 ]; then
 	echo "DONE!" >&2
 	# Trigger shutdown through supervisor.
+	sleep 1
 	kill ${ZEEK_ARG_SUPERVISOR_PID};
 	echo "DONE" > DONE
 fi
