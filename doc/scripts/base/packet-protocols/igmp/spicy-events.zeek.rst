@@ -27,7 +27,7 @@ Detailed Interface
 Events
 ######
 .. zeek:id:: IGMP::leave_group
-   :source-code: policy/protocols/conn/multicast-participants.zeek 130 133
+   :source-code: policy/protocols/conn/multicast-participants.zeek 142 145
 
    :Type: :zeek:type:`event` (source: :zeek:type:`addr`, group_addr: :zeek:type:`addr`)
 
@@ -53,7 +53,7 @@ Events
    :param group_addr: Multicast group address
 
 .. zeek:id:: IGMP::membership_report_v1
-   :source-code: policy/protocols/conn/multicast-participants.zeek 101 104
+   :source-code: policy/protocols/conn/multicast-participants.zeek 113 116
 
    :Type: :zeek:type:`event` (source: :zeek:type:`addr`, group_addr: :zeek:type:`addr`)
 
@@ -66,7 +66,7 @@ Events
    :param group_addr: Multicast group address
 
 .. zeek:id:: IGMP::membership_report_v2
-   :source-code: policy/protocols/conn/multicast-participants.zeek 106 109
+   :source-code: policy/protocols/conn/multicast-participants.zeek 118 121
 
    :Type: :zeek:type:`event` (source: :zeek:type:`addr`, group_addr: :zeek:type:`addr`)
 
@@ -79,7 +79,7 @@ Events
    :param group_addr: Multicast group address
 
 .. zeek:id:: IGMP::membership_report_v3
-   :source-code: policy/protocols/conn/multicast-participants.zeek 111 128
+   :source-code: policy/protocols/conn/multicast-participants.zeek 123 140
 
    :Type: :zeek:type:`event` (source: :zeek:type:`addr`, groups: :zeek:type:`vector` of :zeek:type:`IGMP::Group`)
 

@@ -38,9 +38,9 @@ Events
 
 Hooks
 #####
-=================================================================== =
-:zeek:id:`Conn::log_policy_multicast`: :zeek:type:`Log::PolicyHook`
-=================================================================== =
+=================================================================== =============================================
+:zeek:id:`Conn::log_policy_multicast`: :zeek:type:`Log::PolicyHook` A default logging policy hook for the stream.
+=================================================================== =============================================
 
 
 Detailed Interface
@@ -48,34 +48,49 @@ Detailed Interface
 Types
 #####
 .. zeek:type:: Conn::MulticastParticipantsInfo
-   :source-code: policy/protocols/conn/multicast-participants.zeek 14 21
+   :source-code: policy/protocols/conn/multicast-participants.zeek 17 33
 
    :Type: :zeek:type:`record`
 
 
    .. zeek:field:: ts :zeek:type:`time` :zeek:attr:`&log`
 
+      The timestamp of the connection.
+
 
    .. zeek:field:: cid :zeek:type:`string` :zeek:attr:`&log`
+
+      The UID string for the connection. This is the uid field from the
+      original connection record.
 
 
    .. zeek:field:: orig_h :zeek:type:`addr` :zeek:attr:`&log`
 
+      The address of the host origintating the connection to the multicast
+      group address.
 
-   .. zeek:field:: multicast_addr :zeek:type:`addr` :zeek:attr:`&log`
+
+   .. zeek:field:: group_addr :zeek:type:`addr` :zeek:attr:`&log`
+
+      The multicast group address for the connection.
 
 
-   .. zeek:field:: multicast_p :zeek:type:`port` :zeek:attr:`&log`
+   .. zeek:field:: group_p :zeek:type:`port` :zeek:attr:`&log`
+
+      The port used in the multicast connection.
 
 
    .. zeek:field:: participants :zeek:type:`set` [:zeek:type:`addr`] :zeek:attr:`&log`
+
+      The set of multicast participants collected from IGMP for the group
+      address.
 
 
 
 Events
 ######
 .. zeek:id:: Conn::log_multicast
-   :source-code: policy/protocols/conn/multicast-participants.zeek 25 25
+   :source-code: policy/protocols/conn/multicast-participants.zeek 37 37
 
    :Type: :zeek:type:`event` (rec: :zeek:type:`Conn::MulticastParticipantsInfo`)
 
@@ -85,9 +100,10 @@ Events
 Hooks
 #####
 .. zeek:id:: Conn::log_policy_multicast
-   :source-code: policy/protocols/conn/multicast-participants.zeek 12 12
+   :source-code: policy/protocols/conn/multicast-participants.zeek 13 13
 
    :Type: :zeek:type:`Log::PolicyHook`
 
+   A default logging policy hook for the stream.
 
 
