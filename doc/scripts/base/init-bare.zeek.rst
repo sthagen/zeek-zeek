@@ -12723,11 +12723,6 @@ Types
 
       (present if :doc:`/scripts/base/files/pe/main.zeek` is loaded)
 
-
-   .. zeek:field:: zip_file :zeek:type:`ZIP::File` :zeek:attr:`&optional`
-
-      (present if :doc:`/scripts/base/files/zip/main.zeek` is loaded)
-
    :Attributes: :zeek:attr:`&redef`
 
    File Analysis handle for a file that Zeek is analyzing. This holds
