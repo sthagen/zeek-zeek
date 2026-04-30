@@ -1341,6 +1341,14 @@ type EventNameStats: vector of EventNameCounter;
 ##    directly and then remove this alias.
 type var_sizes: table[string] of count;
 
+## Meta-information about script-level attribute.
+type script_id_attr: record {
+    name: string;  ##< The name of the attribute including the &.
+    expr: string &optional;  ##< The stringified expression, if any.
+};
+
+type script_id_attrs: vector of script_id_attr;
+
 ## Meta-information about a script-level identifier.
 ##
 ## .. zeek:see:: global_ids id_table
@@ -1353,6 +1361,7 @@ type script_id: record {
 	redefinable: bool;	##< True if the identifier is declared with the :zeek:attr:`&redef` attribute.
 	broker_backend: bool;	##< True if the identifier has a Broker backend defined using the :zeek:attr:`&backend` attribute.
 	value: any &optional;	##< The current value of the identifier.
+	attributes: script_id_attrs &optional; ##< Attributes attached to this identifier, if any.
 };
 
 ## Table type used to map script-level identifiers to meta-information

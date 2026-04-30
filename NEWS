@@ -47,6 +47,9 @@ New Functionality
                 Files::FILES_ANALYZER_ZIP
         };
 
+- The ``script_id`` records returned by the ``global_ids()`` BiF now include information
+  about the attributes attached to identifiers in the ``$attributes`` field.
+
 Changed Functionality
 ---------------------
 
