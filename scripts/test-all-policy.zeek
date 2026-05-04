@@ -21,8 +21,8 @@
 @ifdef ( Cluster::CLUSTER_BACKEND_ZEROMQ )
 @load frameworks/cluster/backend/zeromq/__load__.zeek
 @load frameworks/cluster/backend/zeromq/connect.zeek
+@load frameworks/cluster/backend/zeromq/options.zeek
 @load frameworks/cluster/backend/zeromq/main.zeek
-@load frameworks/cluster/backend/zeromq/cluster.zeek
 @endif
 @load frameworks/cluster/experimental.zeek
 # Loaded via the above through test-all-policy-cluster.test
