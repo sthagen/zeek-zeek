@@ -1,3 +1,13 @@
+9.0.0-dev.72 | 2026-05-04 09:10:36 -0700
+
+  * Close the backend in storage btests to avoid memory leak warnings (Tim Wojtulewicz, Corelight)
+
+  * Add simple btest with multiple sqlite backends (Tim Wojtulewicz, Corelight)
+
+  * Make sqlite3 prepared statements persistent (Tim Wojtulewicz, Corelight)
+
+  * Remove static from sqlite3 prepared statements (Tim Wojtulewicz, Corelight)
+
 9.0.0-dev.67 | 2026-05-04 17:07:59 +0200
 
   * Gracefully handle when tables cannot grow anymore (Benjamin Bannier, Corelight)
