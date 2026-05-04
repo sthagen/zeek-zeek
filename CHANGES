@@ -1,3 +1,18 @@
+9.0.0-dev.67 | 2026-05-04 17:07:59 +0200
+
+  * Gracefully handle when tables cannot grow anymore (Benjamin Bannier, Corelight)
+
+    In the current implementation tables hold all data in a single memory
+    allocation, and to add more entries it might need to `realloc` the
+    allocation. If the `realloc` call fails e.g., due to out of memory, a
+    nullptr is returned which we previously did not check for; instead we
+    would have dereferenced the the nullptr which ideally would have led to
+    a SEGFAULT.
+
+    This patch changes the call to instead use our safe wrapper around
+    `realloc` which makes sure that we do not keep running if the realloc
+    failed.
+
 9.0.0-dev.65 | 2026-05-04 09:46:08 +0200
 
   * spicy: Mix analyzer tag string into _analyzer_id (Arne Welzel, Corelight)
