@@ -1,3 +1,13 @@
+9.0.0-dev.77 | 2026-05-04 12:11:43 -0700
+
+  * Add field comments to multicast-participants log info (Tim Wojtulewicz)
+
+  * Rename multicast_addr/multicast_p to group_addr/group_p (Tim Wojtulewicz, Corelight)
+
+  * Move script to policy/protocols/conn, rename to multicast-participants.log (Tim Wojtulewicz, Corelight)
+
+  * Add log policy that tracks multicast connections to sources from IGMP (Tim Wojtulewicz, Corelight)
+
 9.0.0-dev.72 | 2026-05-04 09:10:36 -0700
 
   * Close the backend in storage btests to avoid memory leak warnings (Tim Wojtulewicz, Corelight)
