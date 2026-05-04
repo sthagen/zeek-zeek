@@ -1,3 +1,20 @@
+9.0.0-dev.65 | 2026-05-04 09:46:08 +0200
+
+  * spicy: Mix analyzer tag string into _analyzer_id (Arne Welzel, Corelight)
+
+    This allows to create unique child file uids if different analyzer
+    types create child file objects for the same parent file.
+
+  * spicy/runtime-support: Fix file lifecycle (Arne Welzel, Corelight)
+
+    Feeding anything, including empty bytes, maybe cause an existing file to
+    be removed due to lifecycle operations being triggered via DataIn().
+    Protect by first looking up the file and skipping the DataIn() calls if
+    it already exists.
+
+    This was tickled when an outer ZIP archive is created twice with the
+    same fuid and the inner file outlives the outer archive.
+
 9.0.0-dev.62 | 2026-04-30 16:55:26 -0700
 
   * Fix assignment typo in zeek::threading::Value's move constructor (Christian Kreibich, Corelight)
