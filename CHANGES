@@ -1,3 +1,26 @@
+9.0.0-dev.79 | 2026-05-04 16:12:30 -0700
+
+  * dns: enforce RR-local bounds for EDNS option parsing (Urval)
+
+    Fix incorrect boundary handling in EDNS option parsing by enforcing
+    RR-local length constraints.
+
+    Previously, EDNS options were parsed using the outer DNS message
+    cursor (data, len), which could allow malformed OPT records to read
+    into subsequent RRs.
+
+    Changes:
+    - Introduce RR-local parsing state (rr_data, remaining)
+    - Validate option lengths strictly within RR bounds
+    - Use option-local pointers (option_data, option_remaining)
+    - Ensure outer cursor advances exactly once by rdlength
+    - Raise EDNS_truncated_option on invalid or leftover data
+
+    Testing:
+    - Add btest validating weird.log output
+    - Verify EDNS_truncated_option is raised exactly once
+    - Ensure no unintended parsing of subsequent RRs
+
 9.0.0-dev.77 | 2026-05-04 12:11:43 -0700
 
   * Add field comments to multicast-participants log info (Tim Wojtulewicz)
