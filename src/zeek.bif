@@ -2746,6 +2746,8 @@ function global_ids%(%): id_table
 	%{
 	static auto id_table = zeek::id::find_type<zeek::TableType>("id_table");
 	static auto script_id = zeek::id::find_type<zeek::RecordType>("script_id");
+	static auto script_id_attr = zeek::id::find_type<zeek::RecordType>("script_id_attr");
+	static auto script_id_attrs = zeek::id::find_type<zeek::VectorType>("script_id_attrs");
 
 	zeek::ODesc d;
 	auto ids = zeek::make_intrusive<zeek::TableVal>(id_table);
@@ -2765,6 +2767,26 @@ function global_ids%(%): id_table
 
 		if ( id->HasVal() )
 			rec->Assign(7, id->GetVal());
+
+
+		// Add attributes, if any.
+		if ( auto attrs = id->GetAttrs(); attrs ) {
+			auto attrs_vec = zeek::make_intrusive<zeek::VectorVal>(script_id_attrs);
+			for ( const auto& attr : attrs->GetAttrs() ) {
+				auto attr_rec = zeek::make_intrusive<zeek::RecordVal>(script_id_attr);
+
+				// Caching or re-using the StringVal would make a lot of sense.
+				attr_rec->Assign(0, zeek::make_intrusive<zeek::StringVal>(zeek::detail::attr_name(attr->Tag())));
+
+				// Add the stringified expression.
+				if ( auto expr = attr->GetExpr(); expr )
+					attr_rec->Assign(1, zeek::make_intrusive<zeek::StringVal>(zeek::obj_desc_short(expr)));
+
+				attrs_vec->Append(std::move(attr_rec));
+			}
+
+			rec->Assign(8, std::move(attrs_vec));
+		}
 
 		auto id_name = zeek::make_intrusive<zeek::StringVal>(id->Name());
 		ids->Assign(std::move(id_name), std::move(rec));
