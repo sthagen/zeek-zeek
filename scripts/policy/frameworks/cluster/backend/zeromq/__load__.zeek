@@ -1,1 +1,2 @@
-@load ./main.zeek
+@load ./options
+@load ./main

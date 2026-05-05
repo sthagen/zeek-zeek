@@ -1,73 +1,108 @@
 ##! Functions for parsing and manipulating IP and MAC addresses.
 
-# Regular expressions for matching IP addresses in strings.
+module GLOBAL;
 
-const ipv4_decim = /[0-9]{1}|[0-9]{2}|0[0-9]{2}|1[0-9]{2}|2[0-4][0-9]|25[0-5]/;
+export {
 
-const ipv4_addr_regex = ipv4_decim & /\./ & ipv4_decim & /\./ & ipv4_decim & /\./ & ipv4_decim;
+	# Regular expressions for matching IP addresses in strings.
 
-const ipv6_hextet = /[0-9A-Fa-f]{1,4}/;
+	const ipv4_decim = /[0-9]{1}|[0-9]{2}|0[0-9]{2}|1[0-9]{2}|2[0-4][0-9]|25[0-5]/;
 
-const ipv6_8hex_regex = /([0-9A-Fa-f]{1,4}:){7}/ & ipv6_hextet;
+	const ipv4_addr_regex = ipv4_decim & /\./ & ipv4_decim & /\./ & ipv4_decim & /\./ & ipv4_decim;
 
-const ipv6_hex4dec_regex = /([0-9A-Fa-f]{1,4}:){6}/ & ipv4_addr_regex;
+	const ipv6_hextet = /[0-9A-Fa-f]{1,4}/;
 
-const ipv6_compressed_lead_hextets0 = /::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,6})?/;
+	const ipv6_8hex_regex = /([0-9A-Fa-f]{1,4}:){7}/ & ipv6_hextet;
 
-const ipv6_compressed_lead_hextets1 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,5})?/;
+	const ipv6_hex4dec_regex = /([0-9A-Fa-f]{1,4}:){6}/ & ipv4_addr_regex;
 
-const ipv6_compressed_lead_hextets2 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,4})?/;
+	const ipv6_compressed_lead_hextets0 = /::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,6})?/;
 
-const ipv6_compressed_lead_hextets3 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){2}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,3})?/;
+	const ipv6_compressed_lead_hextets1 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,5})?/;
 
-const ipv6_compressed_lead_hextets4 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){3}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,2})?/;
+	const ipv6_compressed_lead_hextets2 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,4})?/;
 
-const ipv6_compressed_lead_hextets5 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){4}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,1})?/;
+	const ipv6_compressed_lead_hextets3 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){2}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,3})?/;
 
-const ipv6_compressed_lead_hextets6 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){5}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,0})?/;
+	const ipv6_compressed_lead_hextets4 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){3}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,2})?/;
 
-const ipv6_compressed_lead_hextets7 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){6}::/;
+	const ipv6_compressed_lead_hextets5 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){4}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,1})?/;
 
-const ipv6_compressed_hex_regex = ipv6_compressed_lead_hextets0 |
-                                  ipv6_compressed_lead_hextets1 |
-                                  ipv6_compressed_lead_hextets2 |
-                                  ipv6_compressed_lead_hextets3 |
-                                  ipv6_compressed_lead_hextets4 |
-                                  ipv6_compressed_lead_hextets5 |
-                                  ipv6_compressed_lead_hextets6 |
-                                  ipv6_compressed_lead_hextets7;
+	const ipv6_compressed_lead_hextets6 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){5}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,0})?/;
 
-const ipv6_compressed_hext4dec_lead_hextets0 = /::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,4})?/ & ipv4_addr_regex;
+	const ipv6_compressed_lead_hextets7 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){6}::/;
 
-const ipv6_compressed_hext4dec_lead_hextets1 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,3})?/ & ipv4_addr_regex;
+	const ipv6_compressed_hex_regex = ipv6_compressed_lead_hextets0 |
+	                                  ipv6_compressed_lead_hextets1 |
+	                                  ipv6_compressed_lead_hextets2 |
+	                                  ipv6_compressed_lead_hextets3 |
+	                                  ipv6_compressed_lead_hextets4 |
+	                                  ipv6_compressed_lead_hextets5 |
+	                                  ipv6_compressed_lead_hextets6 |
+	                                  ipv6_compressed_lead_hextets7;
 
-const ipv6_compressed_hext4dec_lead_hextets2 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,2})?/ & ipv4_addr_regex;
+	const ipv6_compressed_hext4dec_lead_hextets0 = /::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,4})?/ & ipv4_addr_regex;
 
-const ipv6_compressed_hext4dec_lead_hextets3 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){2}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,1})?/ & ipv4_addr_regex;
+	const ipv6_compressed_hext4dec_lead_hextets1 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,3})?/ & ipv4_addr_regex;
 
-const ipv6_compressed_hext4dec_lead_hextets4 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){3}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,0})?/ & ipv4_addr_regex;
+	const ipv6_compressed_hext4dec_lead_hextets2 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){1}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,2})?/ & ipv4_addr_regex;
 
-const ipv6_compressed_hext4dec_lead_hextets5 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){4}::/ & ipv4_addr_regex;
+	const ipv6_compressed_hext4dec_lead_hextets3 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){2}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,1})?/ & ipv4_addr_regex;
 
-const ipv6_compressed_hex4dec_regex = ipv6_compressed_hext4dec_lead_hextets0 |
-                                      ipv6_compressed_hext4dec_lead_hextets1 |
-                                      ipv6_compressed_hext4dec_lead_hextets2 |
-                                      ipv6_compressed_hext4dec_lead_hextets3 |
-                                      ipv6_compressed_hext4dec_lead_hextets4 |
-                                      ipv6_compressed_hext4dec_lead_hextets5;
+	const ipv6_compressed_hext4dec_lead_hextets4 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){3}::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){0,0})?/ & ipv4_addr_regex;
 
-const ipv6_addr_regex = ipv6_8hex_regex |
-                        ipv6_compressed_hex_regex |
-                        ipv6_hex4dec_regex |
-                        ipv6_compressed_hex4dec_regex;
+	const ipv6_compressed_hext4dec_lead_hextets5 = /[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){4}::/ & ipv4_addr_regex;
 
-const ip_addr_regex = ipv4_addr_regex | ipv6_addr_regex;
+	const ipv6_compressed_hex4dec_regex = ipv6_compressed_hext4dec_lead_hextets0 |
+	                                      ipv6_compressed_hext4dec_lead_hextets1 |
+	                                      ipv6_compressed_hext4dec_lead_hextets2 |
+	                                      ipv6_compressed_hext4dec_lead_hextets3 |
+	                                      ipv6_compressed_hext4dec_lead_hextets4 |
+	                                      ipv6_compressed_hext4dec_lead_hextets5;
 
-## Checks if all elements of a string array are a valid octet value.
-##
-## octets: an array of strings to check for valid octet values.
-##
-## Returns: T if every element is between 0 and 255, inclusive, else F.
+	const ipv6_addr_regex = ipv6_8hex_regex |
+	                        ipv6_compressed_hex_regex |
+	                        ipv6_hex4dec_regex |
+	                        ipv6_compressed_hex4dec_regex;
+
+	const ip_addr_regex = ipv4_addr_regex | ipv6_addr_regex;
+
+	## Checks if all elements of a string array are a valid octet value.
+	##
+	## octets: an array of strings to check for valid octet values.
+	##
+	## Returns: T if every element is between 0 and 255, inclusive, else F.
+	global has_valid_octets: function(octets: string_vec): bool;
+
+	## Extracts all IP (v4 or v6) address strings from a given string.
+	##
+	## input: a string that may contain an IP address anywhere within it.
+	##
+	## check_wrapping: if true, will only return IP addresses that are wrapped in matching pairs of spaces, square brackets, curly braces, or parens. This can be used to avoid extracting strings that look like IPs from innocuous strings, such as SMTP headers.
+	##
+	## Returns: an array containing all valid IP address strings found in *input*.
+	global extract_ip_addresses: function(input: string, check_wrapping: bool &default=F): string_vec;
+
+
+	## Returns the string representation of an IP address suitable for inclusion
+	## in a URI.  For IPv4, this does no special formatting, but for IPv6, the
+	## address is included in square brackets.
+	##
+	## a: the address to make suitable for URI inclusion.
+	##
+	## Returns: the string representation of the address suitable for URI inclusion.
+	global addr_to_uri: function(a: addr): string;
+
+	## Given a string, extracts the hex digits and returns a MAC address in
+	## the format: 00:a0:32:d7:81:8f. If the string doesn't contain 12 or 16 hex
+	## digits, an empty string is returned.
+	##
+	## a: the string to normalize.
+	##
+	## Returns: a normalized MAC address, or an empty string in the case of an error.
+	global normalize_mac: function(a: string): string;
+}
+
 function has_valid_octets(octets: string_vec): bool
 	{
 	for ( i in octets )
@@ -79,13 +114,6 @@ function has_valid_octets(octets: string_vec): bool
 	return T;
 	}
 
-## Extracts all IP (v4 or v6) address strings from a given string.
-##
-## input: a string that may contain an IP address anywhere within it.
-##
-## check_wrapping: if true, will only return IP addresses that are wrapped in matching pairs of spaces, square brackets, curly braces, or parens. This can be used to avoid extracting strings that look like IPs from innocuous strings, such as SMTP headers.
-##
-## Returns: an array containing all valid IP address strings found in *input*.
 function extract_ip_addresses(input: string, check_wrapping: bool &default=F): string_vec
 	{
 	local parts = split_string_all(input, ip_addr_regex);
@@ -116,13 +144,6 @@ function extract_ip_addresses(input: string, check_wrapping: bool &default=F): s
 	return output;
 	}
 
-## Returns the string representation of an IP address suitable for inclusion
-## in a URI.  For IPv4, this does no special formatting, but for IPv6, the
-## address is included in square brackets.
-##
-## a: the address to make suitable for URI inclusion.
-##
-## Returns: the string representation of the address suitable for URI inclusion.
 function addr_to_uri(a: addr): string
 	{
 	if ( is_v4_addr(a) )
@@ -131,13 +152,6 @@ function addr_to_uri(a: addr): string
 		return fmt("[%s]", a);
 	}
 
-## Given a string, extracts the hex digits and returns a MAC address in
-## the format: 00:a0:32:d7:81:8f. If the string doesn't contain 12 or 16 hex
-## digits, an empty string is returned.
-##
-## a: the string to normalize.
-##
-## Returns: a normalized MAC address, or an empty string in the case of an error.
 function normalize_mac(a: string): string
 	{
 	local result = to_lower(gsub(a, /[^A-Fa-f0-9]/, ""));

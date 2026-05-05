@@ -1,3 +1,21 @@
+9.0.0-dev.90 | 2026-05-05 11:27:27 +0200
+
+  * Rename ZeroMQ scripts (Jan Grashoefer, Corelight)
+
+  * Update btests (Jan Grashoefer, Corelight)
+
+  * Fix addr utils namespacing (Jan Grashoefer, Corelight)
+
+  * Disable cluster logic on supervisor in ZMQ btests (Jan Grashoefer, Corelight)
+
+  * Move cluster logic for ZMQ into separate script (Jan Grashoefer, Corelight)
+
+    This allows for Zeek processes that do not take part in the cluster to
+    load ZeroMQ. For example, this can be used to run the ZeroMQ proxy in
+    the context of the supervisor.
+
+  * Make supervisor ZMQ test run into hello timeout (Jan Grashoefer, Corelight)
+
 9.0.0-dev.83 | 2026-05-05 09:51:07 +0200
 
   * GH-5277: doc/test: Document and test invalid checksum and history behavior (Arne Welzel, Corelight)
