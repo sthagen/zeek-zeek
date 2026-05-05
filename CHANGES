@@ -1,3 +1,9 @@
+9.0.0-dev.83 | 2026-05-05 09:51:07 +0200
+
+  * GH-5277: doc/test: Document and test invalid checksum and history behavior (Arne Welzel, Corelight)
+
+  * GH-5418: zeek.bif/global_ids: Expose attributes attached to script identifiers (Arne Welzel, Corelight)
+
 9.0.0-dev.79 | 2026-05-04 16:12:30 -0700
 
   * dns: enforce RR-local bounds for EDNS option parsing (Urval)
